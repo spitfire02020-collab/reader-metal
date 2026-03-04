@@ -177,16 +177,19 @@ final class PlayerViewModel: ObservableObject {
 
     // MARK: - Playback Control Helpers
 
-    /// The sentence chunks for TTS (used for synthesis and highlighting)
+    /// The sentence chunks for TTS - now cached
+    private var cachedTextChunks: [String] = []
+
     var textChunks: [String] {
-        TextChunker.chunkText(item.textContent)
+        if cachedTextChunks.isEmpty {
+            cachedTextChunks = TextChunker.chunkText(item.textContent)
+        }
+        return cachedTextChunks
     }
 
-    /// The original text split into paragraphs for display
+    /// The original text split into paragraphs - uses cached value
     var paragraphs: [String] {
-        item.textContent.components(separatedBy: "\n\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        cachedParagraphs
     }
 
     /// Current sentence being played (for highlighting)

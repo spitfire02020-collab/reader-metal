@@ -195,47 +195,6 @@ struct PlayerView: View {
             }
     }
 
-    /// Build attributed string with sentence highlighting
-    private func attributedParagraphText(paragraph: String, sentences: [String], paragraphStartIndex: Int) -> AttributedString {
-        var result = AttributedString()
-
-        for (index, sentence) in sentences.enumerated() {
-            let globalIndex = paragraphStartIndex + index
-            let isActive = globalIndex == viewModel.currentPlayingIndex
-            let isPast = globalIndex < viewModel.currentPlayingIndex && viewModel.currentPlayingIndex >= 0
-
-            var sentenceAttr = AttributedString(sentence)
-
-            if isActive {
-                sentenceAttr.foregroundColor = Color.appAccent
-                sentenceAttr.backgroundColor = Color.appAccent.opacity(0.15)
-            } else if isPast {
-                sentenceAttr.foregroundColor = Color.appTextSecondary.opacity(0.5)
-            } else {
-                sentenceAttr.foregroundColor = Color.appTextPrimary
-            }
-
-            result.append(sentenceAttr)
-
-            if index < sentences.count - 1 {
-                result.append(AttributedString(" "))
-            }
-        }
-
-        return result
-    }
-
-    /// Map paragraph index to starting sentence index
-    private var sentencesIndicesStart: [Int: Int] {
-        var start = 0
-        var map: [Int: Int] = [:]
-        for (index, sentences) in viewModel.cachedParagraphSentences.enumerated() {
-            map[index] = start
-            start += sentences.count
-        }
-        return map
-    }
-
     // MARK: - Floating Controls - Redesigned with Glassmorphism
 
     private var floatingControls: some View {
