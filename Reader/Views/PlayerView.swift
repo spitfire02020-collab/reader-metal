@@ -10,6 +10,9 @@ struct PlayerView: View {
     @State private var isPlayingSelection = false
     @State private var showControls = true
     @State private var showChapterSheet = false
+    // Auto-scroll state
+    @State private var autoScrollEnabled = true
+    @State private var scrollProxy: ScrollViewProxy?
 
     init(item: LibraryItem) {
         _viewModel = StateObject(wrappedValue: PlayerViewModel(item: item))
@@ -148,21 +151,97 @@ struct PlayerView: View {
     // MARK: - Text Section
 
     private var textSection: some View {
-        ScrollViewReader { proxy in
-            ScrollView(showsIndicators: true) {
-                LazyVStack(alignment: .leading, spacing: 20) {
-                    ForEach(Array(viewModel.cachedParagraphs.enumerated()), id: \.offset) { paragraphIndex, paragraph in
-                        paragraphWithHighlighting(paragraph: paragraph, paragraphIndex: paragraphIndex)
+        ZStack(alignment: .top) {
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: true) {
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        ForEach(Array(viewModel.cachedParagraphs.enumerated()), id: \.offset) { paragraphIndex, paragraph in
+                            paragraphWithHighlighting(paragraph: paragraph, paragraphIndex: paragraphIndex)
+                                .id(paragraphIndex)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    .padding(.bottom, 180)
+                }
+                .onAppear {
+                    scrollProxy = proxy
+                }
+                .onChange(of: viewModel.currentChunkIndex) { _, newIndex in
+                    viewModel.updatePlayingIndex()
+                    // Auto-scroll to the current paragraph
+                    if autoScrollEnabled, newIndex >= 0 {
+                        scrollToParagraph(chunkIndex: newIndex, proxy: proxy)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 180)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 10)
+                        .onChanged { _ in
+                            // Disable auto-scroll when user starts dragging
+                            autoScrollEnabled = false
+                        }
+                )
             }
-            .onChange(of: viewModel.currentChunkIndex) { _, _ in
-                viewModel.updatePlayingIndex()
+
+            // Back to Current button
+            if !autoScrollEnabled && viewModel.currentChunkIndex >= 0 {
+                backToCurrentButton(proxy: scrollProxy)
             }
         }
+    }
+
+    /// Scroll to the paragraph containing the given chunk index
+    private func scrollToParagraph(chunkIndex: Int, proxy: ScrollViewProxy) {
+        // Find which paragraph contains this chunk
+        let paragraphIndex = findParagraphIndex(for: chunkIndex)
+        guard paragraphIndex >= 0 else { return }
+
+        withAnimation(AppAnimation.smooth) {
+            proxy.scrollTo(paragraphIndex, anchor: .center)
+        }
+    }
+
+    /// Find the paragraph index for a given chunk index
+    private func findParagraphIndex(for chunkIndex: Int) -> Int {
+        guard chunkIndex >= 0, chunkIndex < viewModel.textChunks.count else { return 0 }
+        let sentence = viewModel.textChunks[chunkIndex]
+
+        // Find which paragraph contains this sentence
+        for (paragraphIndex, sentences) in viewModel.cachedParagraphSentences.enumerated() {
+            if sentences.contains(where: { $0.contains(sentence) || sentence.contains($0) }) {
+                return paragraphIndex
+            }
+        }
+
+        // Fallback: estimate based on chunk distribution
+        guard !viewModel.cachedParagraphs.isEmpty else { return 0 }
+        let avgChunksPerParagraph = Double(viewModel.textChunks.count) / Double(viewModel.cachedParagraphs.count)
+        return min(Int(Double(chunkIndex) / avgChunksPerParagraph), viewModel.cachedParagraphs.count - 1)
+    }
+
+    /// Back to Current button
+    private func backToCurrentButton(proxy: ScrollViewProxy?) -> some View {
+        Button {
+            autoScrollEnabled = true
+            if let proxy = proxy {
+                scrollToParagraph(chunkIndex: viewModel.currentChunkIndex, proxy: proxy)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.to.line")
+                Text("Back to Current")
+            }
+            .font(AppTypography.captionLarge)
+            .foregroundColor(.black)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                Capsule()
+                    .fill(AppGradients.accent)
+            )
+            .shadow(color: Color.appAccent.opacity(0.4), radius: 8, y: 4)
+        }
+        .padding(.top, 8)
     }
 
     /// Show paragraph text with inline sentence highlighting
