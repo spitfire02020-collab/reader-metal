@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "claude-mem": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/homebrew/lib/node_modules/claude-mem/plugin/scripts/mcp-server.cjs"
+      ]
+    }
+  }
+}

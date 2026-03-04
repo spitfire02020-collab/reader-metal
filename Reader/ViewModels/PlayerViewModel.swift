@@ -45,11 +45,10 @@ final class PlayerViewModel: ObservableObject {
     private let engine = ChatterboxEngine()
     private let downloadService = ModelDownloadService.shared
 
-    /// Total duration - uses audio duration if available, otherwise estimated
+    /// Total duration - always use estimated full duration, not cumulative chunk duration
     var totalDuration: TimeInterval {
-        if audioPlayer.duration > 0 {
-            return audioPlayer.duration
-        }
+        // Always use estimated duration from full text, not the cumulative chunk duration
+        // The audioPlayer.duration only contains chunks that have been generated so far
         return item.duration ?? TextChunker.estimateTotalDuration(for: item.textContent)
     }
 
@@ -60,7 +59,7 @@ final class PlayerViewModel: ObservableObject {
 
     /// Text to display in player - shows "current / total" when playing
     var totalDurationText: String {
-        if audioPlayer.duration > 0 {
+        if audioPlayer.duration > 0 && audioPlayer.isPlaying {
             // Show current position / total when playing
             return "\(audioPlayer.formattedCurrentTime) / \(formattedTotalDuration)"
         }
@@ -280,22 +279,44 @@ final class PlayerViewModel: ObservableObject {
     func updatePlayingIndex() {
         let previousIndex = currentPlayingIndex
 
-        guard currentChunkIndex >= 0, currentChunkIndex < textChunks.count else {
+        guard currentChunkIndex >= 0 else {
             currentPlayingIndex = -1
             if previousIndex != -1 {
                 rebuildAttributedStrings()
             }
             return
         }
-        let sentence = textChunks[currentChunkIndex]
 
-        // Find matching sentence in flattened list
-        if let foundIndex = flattenedSentences.firstIndex(where: { $0.text == sentence }) {
-            currentPlayingIndex = foundIndex
-            // Only rebuild if highlight actually changed
-            if foundIndex != previousIndex {
-                rebuildAttributedStrings()
+        // Map chunk index directly to sentence index
+        // Each chunk corresponds to sentences from that chunk's text
+        let chunkText = currentChunkIndex < textChunks.count ? textChunks[currentChunkIndex] : ""
+
+        // Find the starting sentence index for this chunk by looking at where this chunk's text appears
+        // Use a more robust matching - find any sentence that starts this chunk
+        var foundIndex = -1
+
+        // First try exact match
+        if let idx = flattenedSentences.firstIndex(where: { $0.text == chunkText }) {
+            foundIndex = idx
+        } else {
+            // Try to find by partial match - sentence that starts the chunk
+            for (idx, sentence) in flattenedSentences.enumerated() {
+                if chunkText.hasPrefix(sentence.text) || sentence.text.hasPrefix(chunkText.prefix(min(50, sentence.text.count))) {
+                    foundIndex = idx
+                    break
+                }
             }
+        }
+
+        // Fallback: approximate index based on chunk position
+        if foundIndex < 0 && !flattenedSentences.isEmpty {
+            let approximateIndex = Int(Double(currentChunkIndex) / Double(textChunks.count) * Double(flattenedSentences.count))
+            foundIndex = min(approximateIndex, flattenedSentences.count - 1)
+        }
+
+        if foundIndex >= 0 && foundIndex != previousIndex {
+            currentPlayingIndex = foundIndex
+            rebuildAttributedStrings()
         }
     }
 
