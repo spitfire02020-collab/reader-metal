@@ -123,10 +123,20 @@ final class PlayerViewModel: ObservableObject {
             return
         }
 
+        // Clear existing audio files before loading to avoid duplicates
+        audioPlayer.clearAudioFiles()
+
+        // Clear any stale synthesis progress
+        audioPlayer.clearSynthesisProgress(item.id)
+
         do {
             let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
             NSLog("[PlayerVM] loadExistingChunks: found \(files.count) files")
             for file in files where file.pathExtension == "wav" {
+                // Skip temporary "part" files from interrupted synthesis
+                if file.lastPathComponent.contains("_part") {
+                    continue
+                }
                 // Extract chunk index from filename like "chunk_0.wav"
                 if let indexStr = file.deletingPathExtension().lastPathComponent.split(separator: "_").last,
                    let index = Int(indexStr) {
