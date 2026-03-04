@@ -175,6 +175,14 @@ final class PlayerViewModel: ObservableObject {
         self.audioPlayer = audioPlayer ?? AudioPlayerService.shared
         self.onItemUpdate = onItemUpdate
 
+        // Stop any current playback and cancel synthesis from previous article
+        self.audioPlayer.stop()
+        self.audioPlayer.clearPlaybackState(self.audioPlayer.currentPlayingItemID ?? UUID())
+
+        // Cancel any ongoing synthesis task
+        self.synthesisTask?.cancel()
+        self.isSynthesizing = false
+
         // Cache paragraphs and sentences once
         cacheTextData()
 
