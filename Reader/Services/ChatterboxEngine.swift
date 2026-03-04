@@ -292,7 +292,7 @@ final class ChatterboxEngine: ObservableObject {
                 group.addTask { [self] in
                     NSLog("[Chatterbox] synthesizing chunk \(index+1)/\(chunkCount) (\(chunkForTTS.count) chars)")
                     do {
-                        let audio = try await self.synthesizeChunk(chunkForTTS, speakerContext: speakerCtx)
+                        let audio = try await self.synthesizeChunk(chunkForTTS, speakerContext: speakerCtx, generationConfig: configCopy)
                         return (index, audio)
                     } catch {
                         NSLog("[Chatterbox] chunk \(index) failed: \(error)")
@@ -418,7 +418,7 @@ final class ChatterboxEngine: ObservableObject {
                             continue
                         }
 
-                        let chunkAudio = try await self.synthesizeChunk(chunkForTTS, speakerContext: speakerContext)
+                        let chunkAudio = try await self.synthesizeChunk(chunkForTTS, speakerContext: speakerContext, generationConfig: generationConfig)
                         allAudioSamples.append(contentsOf: chunkAudio)
 
                         let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
@@ -516,12 +516,31 @@ final class ChatterboxEngine: ObservableObject {
     /// Synthesize a single text chunk to audio samples
     private func synthesizeChunk(
         _ text: String,
-        speakerContext: SpeakerContext
+        speakerContext: SpeakerContext,
+        generationConfig: ChatterboxConfig
     ) async throws -> [Float] {
         guard let embedSession = embedTokensSession,
               let lmSession = languageModelSession,
               let decoderSession = conditionalDecoderSession else {
             throw ChatterboxError.modelNotLoaded
+        }
+
+        // ── Apply exaggeration + cfg_weight: scale audio features ───────────────
+        // Combine both parameters into a single scaling factor:
+        // - exaggeration: controls emotional intensity (0.25-2.0)
+        // - cfg_weight: controls conditioning influence (0.2-1.0)
+        // Formula: factor = exaggeration * (cfg_weight / 0.5) to preserve default behavior
+        let combinedFactor = generationConfig.exaggeration * (generationConfig.cfgWeight / 0.5)
+        NSLog("[Chatterbox] Applying combined factor: \(combinedFactor) (exag=\(generationConfig.exaggeration), cfg=\(generationConfig.cfgWeight))")
+
+        let scaledAudioFeatures: ORTValue
+        if combinedFactor != 1.0 {  // Only scale if not default (0.5 * 1.0 = 0.5)
+            scaledAudioFeatures = try scaleAudioFeatures(
+                speakerContext.audioFeatures,
+                factor: combinedFactor
+            )
+        } else {
+            scaledAudioFeatures = speakerContext.audioFeatures
         }
 
         // ── Step 1: Tokenize text ──────────────────────────────────────────────
@@ -564,7 +583,9 @@ final class ChatterboxEngine: ObservableObject {
         NSLog("[Chatterbox] audioFeatures type=\(afInfo.elementType.rawValue) shape=\(afInfo.shape)")
         NSLog("[Chatterbox] textEmbeddings type=\(teInfo.elementType.rawValue) shape=\(teInfo.shape)")
 
-        let prefixEmbeds = try concatEmbeddings(speakerContext.audioFeatures, textEmbeddings)
+        // Use scaled audio features if exaggeration != 0.5
+        let audioFeaturesToUse = scaledAudioFeatures
+        let prefixEmbeds = try concatEmbeddings(audioFeaturesToUse, textEmbeddings)
         let prefixInfo   = try prefixEmbeds.tensorTypeAndShapeInfo()
         let prefixShape  = prefixInfo.shape
         let totalSeqLen  = prefixShape[1].intValue  // audioSeqLen + textSeqLen
@@ -918,6 +939,32 @@ final class ChatterboxEngine: ObservableObject {
             elementType: .float16,
             shape: nsShape
         )
+    }
+
+    /// Scale audio features by a factor (for exaggeration control)
+    /// Audio features shape: [1, seqLen, hiddenDim]
+    /// Factor: >1.0 = more expressive, <1.0 = less expressive
+    private func scaleAudioFeatures(_ audioFeatures: ORTValue, factor: Float) throws -> ORTValue {
+        let info = try audioFeatures.tensorTypeAndShapeInfo()
+        let shape = info.shape
+        let elementType = info.elementType
+
+        NSLog("[Chatterbox] scaleAudioFeatures: factor=\(factor), type=\(elementType.rawValue)")
+
+        // Extract, scale, and recreate tensor
+        if elementType == .float16 {
+            // Handle float16
+            let floatData = try extractFloatArrayFromFloat16(from: audioFeatures)
+            let scaledData = floatData.map { $0 * factor }
+            let nsShape = shape.map { NSNumber(value: $0.intValue) }
+            return try createFloat16Tensor(scaledData, shape: nsShape)
+        } else {
+            // Handle float32
+            let floatData = try extractFloatArray(from: audioFeatures)
+            let scaledData = floatData.map { $0 * factor }
+            let nsShape = shape.map { NSNumber(value: $0.intValue) }
+            return try createFloatTensor(scaledData, shape: nsShape)
+        }
     }
 
     /// Convert a Float32 array to an ORTValue tensor with float16 element type.
