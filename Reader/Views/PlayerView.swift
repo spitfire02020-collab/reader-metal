@@ -109,6 +109,9 @@ struct PlayerView: View {
                     synthesisSettings: $viewModel.synthesisSettings,
                     onVoiceSelected: { voice in
                         viewModel.saveVoiceSelection(voice)
+                    },
+                    onPresetApplied: { preset in
+                        NSLog("[PlayerView] Preset applied: \(preset.name)")
                     }
                 )
             }

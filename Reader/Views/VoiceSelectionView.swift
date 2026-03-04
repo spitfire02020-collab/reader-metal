@@ -9,6 +9,8 @@ struct VoiceSelectionView: View {
     @Binding var synthesisSettings: SynthesisSettings
     /// Callback when voice selection changes - saves to LibraryItem
     var onVoiceSelected: ((VoiceProfile) -> Void)?
+    /// Callback when preset is applied - can be used to show sample text
+    var onPresetApplied: ((VoicePreset) -> Void)?
     @Environment(\.dismiss) private var dismiss
     @State private var showRecordVoice = false
     @State private var isRecording = false
@@ -17,6 +19,8 @@ struct VoiceSelectionView: View {
     @State private var recordingTimer: Timer?
     @State private var customVoices: [VoiceProfile] = []
     @State private var showFileImporter = false
+    @State private var selectedPreset: VoicePreset?
+    @State private var showPresetDetail = false
 
     var body: some View {
         NavigationStack {
@@ -24,6 +28,9 @@ struct VoiceSelectionView: View {
                 VStack(spacing: 24) {
                     // Header
                     headerSection
+
+                    // Presets Section
+                    presetsSection
 
                     // Built-in Voices (using default reference audio)
                     voiceSection(title: "Built-in Voices (Default)", voices: VoiceProfile.builtInVoices)
@@ -102,6 +109,81 @@ struct VoiceSelectionView: View {
             .padding(.top, 4)
         }
         .padding(.top, 8)
+    }
+
+    // MARK: - Presets Section
+
+    private var presetsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Voice Presets")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.appTextTertiary)
+                .textCase(.uppercase)
+                .tracking(0.5)
+
+            // Turbo Presets
+            ForEach(VoicePreset.presets.prefix(5)) { preset in
+                presetCard(preset)
+            }
+
+            Divider()
+                .background(Color.appTextTertiary.opacity(0.3))
+
+            // Style Presets
+            ForEach(VoicePreset.presets.suffix(from: 5)) { preset in
+                presetCard(preset)
+            }
+        }
+    }
+
+    private func presetCard(_ preset: VoicePreset) -> some View {
+        Button {
+            synthesisSettings = preset.settings
+            selectedPreset = preset
+            onPresetApplied?(preset)
+        } label: {
+            HStack(spacing: 12) {
+                // Icon based on tags
+                ZStack {
+                    Circle()
+                        .fill(selectedPreset?.id == preset.id ? Color.appAccent.opacity(0.2) : Color.appSurfaceElevated)
+                        .frame(width: 36, height: 36)
+
+                    Image(systemName: preset.tags.contains("turbo") ? "bolt.fill" : "waveform")
+                        .font(.system(size: 14))
+                        .foregroundStyle(selectedPreset?.id == preset.id ? Color.appAccent : Color.appTextSecondary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(preset.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.appTextPrimary)
+
+                    Text(preset.description)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.appTextSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if selectedPreset?.id == preset.id {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color.appAccent)
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.appSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(selectedPreset?.id == preset.id ? Color.appAccent.opacity(0.5) : Color.clear, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Voice Section
@@ -332,6 +414,53 @@ struct VoiceSelectionView: View {
                 .tracking(0.5)
 
             VStack(spacing: 16) {
+                // Speed slider
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Speed")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.appTextPrimary)
+                        Spacer()
+                        Text(String(format: "%.1fx", synthesisSettings.speed))
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(Color.appTextSecondary)
+                    }
+                    Slider(value: $synthesisSettings.speed, in: 0.5...2.0, step: 0.1)
+                        .tint(Color.appAccent)
+                }
+
+                // Exaggeration slider
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Exaggeration")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.appTextPrimary)
+                        Spacer()
+                        Text(String(format: "%.2f", synthesisSettings.exaggeration))
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(Color.appTextSecondary)
+                    }
+                    Slider(value: $synthesisSettings.exaggeration, in: 0.25...2.0, step: 0.05)
+                        .tint(Color.appAccent)
+                }
+
+                // CFG Weight slider
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("CFG Weight")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.appTextPrimary)
+                        Spacer()
+                        Text(String(format: "%.2f", synthesisSettings.cfgWeight))
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(Color.appTextSecondary)
+                    }
+                    Slider(value: $synthesisSettings.cfgWeight, in: 0.2...1.0, step: 0.05)
+                        .tint(Color.appAccent)
+                }
+
+                Divider().background(Color.appTextTertiary.opacity(0.3))
+
                 // Seed input with consistent generation info
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -371,23 +500,10 @@ struct VoiceSelectionView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(Color.appAccent)
 
-                        Text("Combine with a fixed voice (built-in or cloned) + non-zero seed for consistent output across generations.")
+                        Text("Combine with a fixed voice + non-zero seed for consistent output.")
                             .font(.system(size: 11))
                             .foregroundStyle(Color.appTextSecondary)
                     }
-                }
-
-                Divider().background(Color.appTextTertiary.opacity(0.3))
-
-                // Tip about reproducible output
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.appAccent)
-
-                    Text("Set a seed (e.g., 42) to get the same output every time. Use 0 for random.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.appTextSecondary)
                 }
             }
             .padding(16)

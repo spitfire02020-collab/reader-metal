@@ -494,7 +494,10 @@ final class PlayerViewModel: ObservableObject {
                 onProgress: { [weak self] progress in
                     self?.synthesisProgress = progress
                 },
-                seed: synthesisSettings.seed
+                seed: synthesisSettings.seed,
+                exaggeration: Float(synthesisSettings.exaggeration),
+                cfgWeight: Float(synthesisSettings.cfgWeight),
+                speedFactor: Float(synthesisSettings.speed)
             )
 
             // Save chunk paths to item
@@ -630,7 +633,11 @@ final class PlayerViewModel: ObservableObject {
             let stream = engine.synthesizeStream(
                 text: item.textContent,
                 referenceAudioURL: refAudioURL,
-                outputURL: outputURL
+                outputURL: outputURL,
+                seed: synthesisSettings.seed,
+                exaggeration: Float(synthesisSettings.exaggeration),
+                cfgWeight: Float(synthesisSettings.cfgWeight),
+                speedFactor: Float(synthesisSettings.speed)
             )
 
             // Tell delegate to wait for more chunks if playback catches up
@@ -775,7 +782,10 @@ final class PlayerViewModel: ObservableObject {
                         // Update shared progress for library view
                         self?.audioPlayer.updateSynthesisProgress(self?.item.id ?? UUID(), progress: chunkProgress + inChunkProgress)
                     },
-                    seed: synthesisSettings.seed
+                    seed: synthesisSettings.seed,
+                exaggeration: Float(synthesisSettings.exaggeration),
+                cfgWeight: Float(synthesisSettings.cfgWeight),
+                speedFactor: Float(synthesisSettings.speed)
                 )
 
                 // Save chunk path
@@ -950,7 +960,10 @@ final class PlayerViewModel: ObservableObject {
                         self.currentStreamingChunkIndex = min(chunkIndex, chunks.count - 1)
                     }
                 },
-                seed: synthesisSettings.seed
+                seed: synthesisSettings.seed,
+                exaggeration: Float(synthesisSettings.exaggeration),
+                cfgWeight: Float(synthesisSettings.cfgWeight),
+                speedFactor: Float(synthesisSettings.speed)
             )
 
             isStreamingAudio = false
@@ -1030,7 +1043,10 @@ final class PlayerViewModel: ObservableObject {
                         self.currentStreamingChunkIndex = min(chunkIndex, chunks.count - 1)
                     }
                 },
-                seed: synthesisSettings.seed
+                seed: synthesisSettings.seed,
+                exaggeration: Float(synthesisSettings.exaggeration),
+                cfgWeight: Float(synthesisSettings.cfgWeight),
+                speedFactor: Float(synthesisSettings.speed)
             )
 
             isStreamingAudio = false
@@ -1119,7 +1135,10 @@ final class PlayerViewModel: ObservableObject {
                 outputURL: outputURL,
                 onChunkReady: tempOnChunkReady,
                 onProgress: nil,
-                seed: synthesisSettings.seed
+                seed: synthesisSettings.seed,
+                exaggeration: Float(synthesisSettings.exaggeration),
+                cfgWeight: Float(synthesisSettings.cfgWeight),
+                speedFactor: Float(synthesisSettings.speed)
             )
 
             // Now play all the chunks
