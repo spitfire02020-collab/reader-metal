@@ -47,6 +47,20 @@ final class AudioPlayerService: NSObject, ObservableObject {
     /// Progress tracking per item (itemID -> progress 0-1)
     @Published private(set) var itemProgress: [UUID: Double] = [:]
 
+    /// Synthesis progress tracking per item (itemID -> progress 0-1)
+    /// This is updated during background generation (generateOnly)
+    @Published private(set) var synthesisProgress: [UUID: Double] = [:]
+
+    /// Update synthesis progress for an item
+    func updateSynthesisProgress(_ itemID: UUID, progress: Double) {
+        synthesisProgress[itemID] = progress
+    }
+
+    /// Clear synthesis progress for an item (when done)
+    func clearSynthesisProgress(_ itemID: UUID) {
+        synthesisProgress.removeValue(forKey: itemID)
+    }
+
     /// Check if a specific item is in queue or playing
     func isItemQueued(_ itemID: UUID) -> Bool {
         currentPlayingItemID == itemID || playbackQueue.contains(itemID)

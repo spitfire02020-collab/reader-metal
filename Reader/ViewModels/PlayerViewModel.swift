@@ -515,13 +515,24 @@ final class PlayerViewModel: ObservableObject {
     func startSynthesis() async {
         NSLog("[PlayerVM] startSynthesis called, item.status=\(item.status.rawValue)")
 
-        // If audio is already ready, play the existing file
+        // If audio is already ready (single file), play the existing file
         if item.status == .ready, let audioPath = item.audioFileURL, !audioPath.isEmpty {
             let url = URL(fileURLWithPath: audioPath)
             if FileManager.default.fileExists(atPath: audioPath) {
                 audioPlayer.loadAudio(url: url, title: item.title, artist: item.displayAuthor)
                 audioPlayer.play()
                 NSLog("[PlayerVM] Playing existing audio file")
+                return
+            }
+        }
+
+        // If chunks already exist (from generateOnly), play them
+        if item.status == .ready && !item.generatedChunks.isEmpty {
+            NSLog("[PlayerVM] Using existing chunks for playback")
+            // loadExistingChunks was already called in init, just start playing
+            if audioPlayer.hasAudioFiles {
+                audioPlayer.play()
+                NSLog("[PlayerVM] Started playing chunks")
                 return
             }
         }
@@ -700,10 +711,12 @@ final class PlayerViewModel: ObservableObject {
                         allChunkURLs.append(url)
                     },
                     onProgress: { [weak self] progress in
-                        // Update overall progress
+                        // Update local progress
                         let chunkProgress = Double(index) / Double(chunks.count)
                         let inChunkProgress = progress / Double(chunks.count)
                         self?.synthesisProgress = chunkProgress + inChunkProgress
+                        // Update shared progress for library view
+                        self?.audioPlayer.updateSynthesisProgress(self?.item.id ?? UUID(), progress: chunkProgress + inChunkProgress)
                     },
                     seed: synthesisSettings.seed
                 )
@@ -718,12 +731,17 @@ final class PlayerViewModel: ObservableObject {
             // Mark as ready
             item.status = .ready
 
+            // Clear synthesis progress
+            audioPlayer.clearSynthesisProgress(item.id)
+
             NSLog("[PlayerVM] generateOnly complete: \(allChunkURLs.count) chunks saved, duration: \(item.duration ?? 0)")
 
         } catch {
             NSLog("[PlayerVM] generateOnly error: \(error)")
             errorMessage = error.localizedDescription
             item.status = .error
+            // Clear synthesis progress on error
+            audioPlayer.clearSynthesisProgress(item.id)
         }
 
         isSynthesizing = false

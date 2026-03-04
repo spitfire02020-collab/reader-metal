@@ -43,11 +43,6 @@
 		BAAC49462F55FB0D00ADDCFD /* language_model_q4f16.onnx_data in Resources */ = {isa = PBXBuildFile; fileRef = BAAC493A2F55FB0D00ADDCFD /* language_model_q4f16.onnx_data */; };
 		BAAC49472F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BAAC493B2F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx */; };
 		BAAC49482F55FB0D00ADDCFD /* default_voice.wav in Resources */ = {isa = PBXBuildFile; fileRef = BAAC49362F55FB0D00ADDCFD /* default_voice.wav */; };
-		BAAC49492F55FB0D00ADDCFD /* speech_encoder_q4f16_fixed.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BB000040 /* speech_encoder_q4f16_fixed.onnx */; };
-		BAAC494A2F55FB0D00ADDCFD /* embed_tokens_q4f16_fixed.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BB000041 /* embed_tokens_q4f16_fixed.onnx */; };
-		BAAC494B2F55FB0D00ADDCFD /* language_model_q4f16_fixed.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BB000042 /* language_model_q4f16_fixed.onnx */; };
-		BAAC494C2F55FB0D00ADDCFD /* conditional_decoder_q4f16_fixed.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BB000043 /* conditional_decoder_q4f16_fixed.onnx */; };
-/* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		BAAC49342F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx; sourceTree = "<group>"; };
@@ -96,10 +91,6 @@
 		BB000037 /* conditional_decoder_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx_data; sourceTree = "<group>"; };
 		BB000038 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
 		BB000039 /* default_voice.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = default_voice.wav; sourceTree = "<group>"; };
-		BB000040 /* speech_encoder_q4f16_fixed.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ChatterboxModels/speech_encoder_q4f16_fixed.onnx; sourceTree = "<group>"; };
-		BB000041 /* embed_tokens_q4f16_fixed.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ChatterboxModels/embed_tokens_q4f16_fixed.onnx; sourceTree = "<group>"; };
-		BB000042 /* language_model_q4f16_fixed.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ChatterboxModels/language_model_q4f16_fixed.onnx; sourceTree = "<group>"; };
-		BB000043 /* conditional_decoder_q4f16_fixed.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ChatterboxModels/conditional_decoder_q4f16_fixed.onnx; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -236,10 +227,6 @@
 				BB000037 /* conditional_decoder_q4f16.onnx_data */,
 				BB000038 /* tokenizer.json */,
 				BB000039 /* default_voice.wav */,
-				BB000040 /* speech_encoder_q4f16_fixed.onnx */,
-				BB000041 /* embed_tokens_q4f16_fixed.onnx */,
-				BB000042 /* language_model_q4f16_fixed.onnx */,
-				BB000043 /* conditional_decoder_q4f16_fixed.onnx */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -334,10 +321,6 @@
 				BAAC49462F55FB0D00ADDCFD /* language_model_q4f16.onnx_data in Resources */,
 				BAAC49472F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx in Resources */,
 				BAAC49482F55FB0D00ADDCFD /* default_voice.wav in Resources */,
-				BAAC49492F55FB0D00ADDCFD /* speech_encoder_q4f16_fixed.onnx in Resources */,
-				BAAC494A2F55FB0D00ADDCFD /* embed_tokens_q4f16_fixed.onnx in Resources */,
-				BAAC494B2F55FB0D00ADDCFD /* language_model_q4f16_fixed.onnx in Resources */,
-				BAAC494C2F55FB0D00ADDCFD /* conditional_decoder_q4f16_fixed.onnx in Resources */,
 				AA000003 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

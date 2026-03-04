@@ -127,9 +127,23 @@ struct LibraryView: View {
 
     // Handle start generation from library (background download - no playback)
     private func handleStartGeneration(_ item: LibraryItem) async {
+        // Find the item in viewModel to get the latest state
+        guard let itemIndex = viewModel.items.firstIndex(where: { $0.id == item.id }) else { return }
+
+        // Update status to processing
+        viewModel.items[itemIndex].status = .processing
+        viewModel.saveLibrary()
+
         // Create a temporary PlayerViewModel to handle synthesis
-        let vm = PlayerViewModel(item: item)
+        // Pass audioPlayer so it can update synthesis progress
+        let vm = PlayerViewModel(item: viewModel.items[itemIndex], audioPlayer: audioPlayer)
         await vm.generateOnly()
+
+        // Update the item in viewModel with generated chunks and status
+        if let updatedItem = vm.item as LibraryItem? {
+            viewModel.items[itemIndex] = updatedItem
+            viewModel.saveLibrary()
+        }
     }
 
     // MARK: - Model Status Banner - Redesigned
@@ -660,7 +674,8 @@ struct LibraryItemRow: View {
     /// Download/Generate button for quick-start from library
     @ViewBuilder
     private var downloadButton: some View {
-        let progress = audioPlayer.progressForItem(item.id)
+        // Use synthesis progress for background generation, fallback to playback progress
+        let progress = audioPlayer.synthesisProgress[item.id] ?? audioPlayer.progressForItem(item.id)
         let isCurrentItem = audioPlayer.currentPlayingItemID == item.id
         let isQueued = audioPlayer.isItemQueued(item.id)
 
