@@ -712,10 +712,13 @@ final class PlayerViewModel: ObservableObject {
                 item.generatedChunks[index] = outputURL.path
             }
 
+            // Calculate and save total duration
+            item.duration = TextChunker.estimateTotalDuration(for: item.textContent)
+
             // Mark as ready
             item.status = .ready
 
-            NSLog("[PlayerVM] generateOnly complete: \(allChunkURLs.count) chunks saved")
+            NSLog("[PlayerVM] generateOnly complete: \(allChunkURLs.count) chunks saved, duration: \(item.duration ?? 0)")
 
         } catch {
             NSLog("[PlayerVM] generateOnly error: \(error)")
