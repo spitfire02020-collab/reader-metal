@@ -288,7 +288,18 @@ struct PlayerView: View {
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
                                 let progress = max(0, min(1, value.location.x / geometry.size.width))
-                                viewModel.audioPlayer.seekToProgress(progress)
+                                // Calculate target chunk based on progress
+                                let targetChunkIndex = Int(progress * Double(viewModel.textChunks.count - 1))
+                                let safeChunkIndex = max(0, min(targetChunkIndex, viewModel.textChunks.count - 1))
+                                // If we have existing chunks, seek; otherwise start synthesis from that chunk
+                                if viewModel.item.generatedChunks[safeChunkIndex] != nil || viewModel.audioPlayer.hasAudioFiles {
+                                    viewModel.audioPlayer.seekToProgress(progress)
+                                } else {
+                                    // Start synthesis from target chunk
+                                    Task {
+                                        await viewModel.startSynthesisFromChunk(safeChunkIndex)
+                                    }
+                                }
                             }
                     )
                 }
@@ -331,7 +342,7 @@ struct PlayerView: View {
 
                     Spacer()
 
-                    Text(viewModel.audioPlayer.duration > 0 ? viewModel.audioPlayer.formattedRemaining : viewModel.formattedTotalDuration)
+                    Text(viewModel.totalDurationText)
                         .font(AppTypography.mono)
                         .foregroundStyle(Color.appTextTertiary)
                 }

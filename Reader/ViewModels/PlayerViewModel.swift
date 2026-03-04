@@ -58,6 +58,15 @@ final class PlayerViewModel: ObservableObject {
         formatTime(totalDuration)
     }
 
+    /// Text to display in player - shows "current / total" when playing
+    var totalDurationText: String {
+        if audioPlayer.duration > 0 {
+            // Show current position / total when playing
+            return "\(audioPlayer.formattedCurrentTime) / \(formattedTotalDuration)"
+        }
+        return formattedTotalDuration
+    }
+
     private func formatTime(_ time: TimeInterval) -> String {
         let totalSeconds = Int(time)
         let hours = totalSeconds / 3600
