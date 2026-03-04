@@ -221,11 +221,48 @@ final class PlayerViewModel: ObservableObject {
 
     /// Save voice selection to item and notify parent
     func saveVoiceSelection(_ voice: VoiceProfile) {
+        // Update both the item AND the currently selected voice
+        selectedVoice = voice
         var updatedItem = item
         updatedItem.selectedVoiceID = voice.id
         item = updatedItem
         onItemUpdate?(updatedItem)
         NSLog("[PlayerVM] Saved voice selection: \(voice.id) for item: \(item.id)")
+
+        // If audio is currently playing or synthesized chunks exist, restart with new voice
+        if isStreamingAudio || audioPlayer.isPlaying || !item.generatedChunks.isEmpty {
+            NSLog("[PlayerVM] Voice changed during playback - restarting synthesis")
+            restartWithNewVoice()
+        }
+    }
+
+    /// Restart synthesis with current voice (used when voice/settings change during playback)
+    private func restartWithNewVoice() {
+        // Stop current playback and synthesis
+        audioPlayer.stop()
+        synthesisTask?.cancel()
+        isSynthesizing = false
+        isStreamingAudio = false
+
+        // Clear generated chunks to force re-synthesis with new voice
+        item.generatedChunks.removeAll()
+
+        // Start new synthesis from beginning
+        synthesisTask = Task {
+            await self.startSynthesisInternal()
+        }
+    }
+
+    /// Handle preset change - apply settings and restart if playing
+    func applyPreset(_ preset: VoicePreset) {
+        synthesisSettings = preset.settings
+        NSLog("[PlayerVM] Applied preset: \(preset.name)")
+
+        // If audio is currently playing or synthesized chunks exist, restart with new settings
+        if isStreamingAudio || audioPlayer.isPlaying || !item.generatedChunks.isEmpty {
+            NSLog("[PlayerVM] Preset changed during playback - restarting synthesis")
+            restartWithNewVoice()
+        }
     }
 
     /// Cache paragraph and sentence data to avoid re-computing on every render
