@@ -125,11 +125,11 @@ struct LibraryView: View {
         }
     }
 
-    // Handle start generation from library
+    // Handle start generation from library (background download - no playback)
     private func handleStartGeneration(_ item: LibraryItem) async {
         // Create a temporary PlayerViewModel to handle synthesis
         let vm = PlayerViewModel(item: item)
-        await vm.startSynthesis()
+        await vm.generateOnly()
     }
 
     // MARK: - Model Status Banner - Redesigned

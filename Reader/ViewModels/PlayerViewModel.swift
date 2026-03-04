@@ -595,7 +595,6 @@ final class PlayerViewModel: ObservableObject {
                     // First chunk started
                 } else {
                     // No backpressure - just append chunks as they arrive
-                    // The delegate's polling mechanism already handles waiting for chunks
                     NSLog("[PlayerVM] appending chunk, isFirst=\(chunk.isFirst), isLast=\(chunk.isLast), progress=\(chunk.progress)")
                     audioPlayer.appendStreamChunk(chunk.url)
                 }
@@ -640,6 +639,91 @@ final class PlayerViewModel: ObservableObject {
         } else if let error = downloadService.errorMessage {
             errorMessage = error
         }
+    }
+
+    /// Generate audio files only without playing - for library background download
+    func generateOnly() async {
+        NSLog("[PlayerVM] generateOnly called for: \(item.title)")
+
+        // Check if already ready
+        if item.status == .ready && item.audioFileURL != nil {
+            NSLog("[PlayerVM] Audio already ready")
+            return
+        }
+
+        // Check if models are available
+        downloadService.checkModelAvailability()
+        guard downloadService.isModelReady else {
+            NSLog("[PlayerVM] Models not ready")
+            showModelDownload = true
+            return
+        }
+
+        isSynthesizing = true
+        synthesisProgress = 0
+        errorMessage = nil
+
+        do {
+            if !engine.isLoaded {
+                try await engine.loadModels()
+            }
+
+            // Use chunk directory for persistent storage
+            let outputDir = chunkDirectory
+            try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+
+            // Get reference audio for voice cloning
+            var refAudioURL: URL?
+            if let path = selectedVoice.referenceAudioPath {
+                refAudioURL = URL(fileURLWithPath: path)
+            }
+
+            // Generate all chunks and save them
+            let chunks = TextChunker.chunkText(item.textContent)
+            var allChunkURLs: [URL] = []
+
+            for (index, chunkText) in chunks.enumerated() {
+                let outputURL = outputDir.appendingPathComponent("chunk_\(index).wav")
+
+                // Skip if already exists
+                if FileManager.default.fileExists(atPath: outputURL.path) {
+                    allChunkURLs.append(outputURL)
+                    continue
+                }
+
+                // Generate this chunk
+                try await engine.synthesize(
+                    text: chunkText,
+                    referenceAudioURL: refAudioURL,
+                    outputURL: outputURL,
+                    onChunkReady: { url in
+                        allChunkURLs.append(url)
+                    },
+                    onProgress: { [weak self] progress in
+                        // Update overall progress
+                        let chunkProgress = Double(index) / Double(chunks.count)
+                        let inChunkProgress = progress / Double(chunks.count)
+                        self?.synthesisProgress = chunkProgress + inChunkProgress
+                    },
+                    seed: synthesisSettings.seed
+                )
+
+                // Save chunk path
+                item.generatedChunks[index] = outputURL.path
+            }
+
+            // Mark as ready
+            item.status = .ready
+
+            NSLog("[PlayerVM] generateOnly complete: \(allChunkURLs.count) chunks saved")
+
+        } catch {
+            NSLog("[PlayerVM] generateOnly error: \(error)")
+            errorMessage = error.localizedDescription
+            item.status = .error
+        }
+
+        isSynthesizing = false
     }
 
     // MARK: - Chapter Navigation
