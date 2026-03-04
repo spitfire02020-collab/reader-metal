@@ -66,6 +66,29 @@ final class PlayerViewModel: ObservableObject {
         return formattedTotalDuration
     }
 
+    /// Playback progress based on total estimated duration (not just loaded chunks)
+    var playbackProgress: Double {
+        if isSynthesizing {
+            // Show synthesis progress when generating
+            return synthesisProgress
+        }
+        // Calculate progress based on total estimated duration
+        // Need to account for: current time in current chunk + duration of all completed chunks
+        let totalEst = totalDuration
+        guard totalEst > 0 else { return 0 }
+
+        // Get the total played duration (current chunk time + all previous chunks)
+        let currentTimeInChunk = audioPlayer.currentTime
+        let currentChunkIdx = audioPlayer.currentChunkIndex
+
+        // Calculate completed chunks duration (approximate based on average chunk duration)
+        let avgChunkDuration = totalEst / Double(textChunks.count)
+        let completedChunksTime = Double(currentChunkIdx) * avgChunkDuration
+
+        let totalPlayedTime = currentTimeInChunk + completedChunksTime
+        return min(1.0, totalPlayedTime / totalEst)
+    }
+
     private func formatTime(_ time: TimeInterval) -> String {
         let totalSeconds = Int(time)
         let hours = totalSeconds / 3600

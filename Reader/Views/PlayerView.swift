@@ -153,7 +153,7 @@ struct PlayerView: View {
                 .onAppear {
                     scrollProxy = proxy
                 }
-                .onChange(of: viewModel.currentChunkIndex) { _, newIndex in
+                .onChange(of: viewModel.audioPlayer.currentChunkIndex) { _, newIndex in
                     viewModel.updatePlayingIndex()
                     // Auto-scroll only when paragraph actually changes
                     if autoScrollEnabled, newIndex >= 0 {
@@ -279,10 +279,10 @@ struct PlayerView: View {
                             .fill(Color.appSurfaceElevated.opacity(0.5))
                             .frame(height: 6)
 
-                        // Progress fill
+                        // Progress fill - use total estimated duration for accurate progress
                         RoundedRectangle(cornerRadius: 3)
                             .fill(AppGradients.accent)
-                            .frame(width: max(0, geometry.size.width * (viewModel.audioPlayer.duration > 0 ? viewModel.audioPlayer.progress : viewModel.synthesisProgress)), height: 6)
+                            .frame(width: max(0, geometry.size.width * viewModel.playbackProgress), height: 6)
                             .shadow(color: Color.appAccent.opacity(0.5), radius: 6, y: 0)
                     }
                     .contentShape(Rectangle())
