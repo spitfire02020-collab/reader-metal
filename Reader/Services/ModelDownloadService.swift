@@ -126,12 +126,8 @@ final class ModelDownloadService: NSObject, ObservableObject {
         let bundleFiles = Set((try? FileManager.default.contentsOfDirectory(atPath: bundleDir.path)) ?? [])
         NSLog("[ModelDownload] Files in bundle: \(bundleFiles)")
 
-        // Also copy fixed models for CoreML
-        let fixedFiles = ModelComponent.allCases.map { "\($0.rawValue)\(variant.suffix)_fixed.onnx" }
-        let filesToCopy = allRequiredFiles + fixedFiles
-
         // Copy any missing files from bundle to Documents
-        for file in filesToCopy {
+        for file in allRequiredFiles {
             let dstPath = docsDir.appendingPathComponent(file).path
 
             if existingInDocs.contains(file) {
@@ -175,17 +171,6 @@ final class ModelDownloadService: NSObject, ObservableObject {
     func modelPath(for component: ModelComponent, variant: ModelVariant = .q4f16) -> URL {
         let filename = "\(component.rawValue)\(variant.suffix).onnx"
         return modelsDirectory.appendingPathComponent(filename)
-    }
-
-    /// Returns path to fixed ONNX model with static shapes for CoreML compatibility
-    func fixedModelPath(for component: ModelComponent, variant: ModelVariant = .q4f16) -> URL {
-        let filename = "\(component.rawValue)\(variant.suffix)_fixed.onnx"
-        let path = modelsDirectory.appendingPathComponent(filename)
-        // Fall back to original if fixed doesn't exist
-        if FileManager.default.fileExists(atPath: path.path) {
-            return path
-        }
-        return modelPath(for: component, variant: variant)
     }
 
     func modelDataPath(for component: ModelComponent, variant: ModelVariant = .q4f16) -> URL {

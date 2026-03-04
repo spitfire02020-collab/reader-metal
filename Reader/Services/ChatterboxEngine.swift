@@ -96,15 +96,11 @@ final class ChatterboxEngine: ObservableObject {
         }
 
         // Use original ONNX models with dynamic shapes.
-        // The fixed models have too restrictive dimensions (512 samples)
-        // which doesn't work for voice cloning (needs longer audio).
         // Dynamic shapes work on device with sufficient memory.
         // CoreML doesn't work well with dynamic shapes, so use CPU on simulator.
         #if targetEnvironment(simulator)
-        let useFixedModels = false  // Use dynamic models (now with working Python-exported ONNX)
         let useCoreML = false       // CoreML not available on simulator
         #else
-        let useFixedModels = false  // Use dynamic models on device
         let useCoreML = true        // Use CoreML on device for GPU acceleration
         #endif
 
@@ -116,12 +112,12 @@ final class ChatterboxEngine: ObservableObject {
         self.ortEnv = env
 
         let sessionOptions = try createSessionOptions(useCoreML: useCoreML)
-        NSLog("[Chatterbox] loadModels: using dynamic models: \(!useFixedModels), CoreML: \(useCoreML)")
+        NSLog("[Chatterbox] loadModels: using dynamic models, CoreML: \(useCoreML)")
 
-        // Use fixed models with static shapes for significantly reduced memory usage
-        let modelPathFn: (ModelComponent) -> URL = useFixedModels
-            ? { [self] in self.downloadService.fixedModelPath(for: $0, variant: self.config.modelVariant) }
-            : { [self] in self.downloadService.modelPath(for: $0, variant: self.config.modelVariant) }
+        // Use dynamic ONNX models
+        let modelPathFn: (ModelComponent) -> URL = { [self] in
+            self.downloadService.modelPath(for: $0, variant: self.config.modelVariant)
+        }
 
         NSLog("[Chatterbox] loadModels: loading speechEncoder from: \(modelPathFn(.speechEncoder).lastPathComponent)")
         speechEncoderSession = try ORTSession(
