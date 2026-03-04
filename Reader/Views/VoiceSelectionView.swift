@@ -60,7 +60,13 @@ struct VoiceSelectionView: View {
             }
             .fileImporter(
                 isPresented: $showFileImporter,
-                allowedContentTypes: [.audio, .wav, .mp3, UTType(filenameExtension: "wav") ?? .audio, UTType(filenameExtension: "mp3") ?? .audio],
+                allowedContentTypes: [
+                    .audio,
+                    UTType.wav,
+                    UTType.mp3,
+                    UTType(filenameExtension: "wav") ?? .audio,
+                    UTType(filenameExtension: "mp3") ?? .audio
+                ],
                 allowsMultipleSelection: false
             ) { result in
                 handleFileImport(result)
@@ -590,6 +596,9 @@ struct VoiceSelectionView: View {
         saveCustomVoices()
         selectedVoice = voice
         showRecordVoice = false
+
+        // Notify parent to save voice selection
+        onVoiceSelected?(voice)
 
         // Reset audio session
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
