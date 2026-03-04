@@ -59,11 +59,23 @@ final class AudioPlayerService: NSObject, ObservableObject {
     /// Clear synthesis progress for an item (when done)
     func clearSynthesisProgress(_ itemID: UUID) {
         synthesisProgress.removeValue(forKey: itemID)
+        // Also clear itemProgress to avoid stale playback progress showing
+        itemProgress.removeValue(forKey: itemID)
     }
 
     /// Clear all loaded audio files (to avoid duplicates when reloading chunks)
     func clearAudioFiles() {
         audioFiles.removeAll()
+    }
+
+    /// Clear playback state for an item - called when loading existing chunks
+    func clearPlaybackState(_ itemID: UUID) {
+        playbackQueue.removeAll { $0 == itemID }
+        if currentPlayingItemID == itemID {
+            currentPlayingItemID = nil
+        }
+        itemProgress.removeValue(forKey: itemID)
+        synthesisProgress.removeValue(forKey: itemID)
     }
 
     /// Check if a specific item is in queue or playing
