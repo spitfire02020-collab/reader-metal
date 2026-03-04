@@ -132,6 +132,9 @@ final class PlayerViewModel: ObservableObject {
         do {
             let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
             NSLog("[PlayerVM] loadExistingChunks: found \(files.count) files")
+
+            // Collect all valid chunk indices and their URLs
+            var chunks: [(index: Int, url: URL)] = []
             for file in files where file.pathExtension == "wav" {
                 // Skip temporary "part" files from interrupted synthesis
                 if file.lastPathComponent.contains("_part") {
@@ -140,12 +143,21 @@ final class PlayerViewModel: ObservableObject {
                 // Extract chunk index from filename like "chunk_0.wav"
                 if let indexStr = file.deletingPathExtension().lastPathComponent.split(separator: "_").last,
                    let index = Int(indexStr) {
-                    item.generatedChunks[index] = file.path
-                    // Load into audio player
-                    audioPlayer.loadChunk(file)
-                    NSLog("[PlayerVM] Loaded existing chunk \(index) from \(file.lastPathComponent)")
+                    chunks.append((index: index, url: file))
                 }
             }
+
+            // Sort chunks by index to ensure correct playback order
+            chunks.sort { $0.index < $1.index }
+            NSLog("[PlayerVM] loadExistingChunks: sorted chunks: \(chunks.map { $0.index })")
+
+            // Now load in sorted order - first chunk becomes main audio
+            for chunk in chunks {
+                item.generatedChunks[chunk.index] = chunk.url.path
+                audioPlayer.loadChunk(chunk.url)
+                NSLog("[PlayerVM] Loaded chunk \(chunk.index) from \(chunk.url.lastPathComponent)")
+            }
+
             NSLog("[PlayerVM] loadExistingChunks: loaded \(item.generatedChunks.count) chunks, audioPlayer.hasAudioFiles = \(audioPlayer.hasAudioFiles)")
         } catch {
             NSLog("[PlayerVM] Failed to load existing chunks: \(error)")
