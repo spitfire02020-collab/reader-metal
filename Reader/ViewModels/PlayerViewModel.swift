@@ -696,9 +696,10 @@ final class PlayerViewModel: ObservableObject {
             for (index, chunkText) in chunks.enumerated() {
                 let outputURL = outputDir.appendingPathComponent("chunk_\(index).wav")
 
-                // Skip if already exists
+                // Skip if already exists, but still track it in generatedChunks
                 if FileManager.default.fileExists(atPath: outputURL.path) {
                     allChunkURLs.append(outputURL)
+                    item.generatedChunks[index] = outputURL.path
                     continue
                 }
 
