@@ -167,10 +167,13 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private var cancellables = Set<AnyCancellable>()
+    /// Callback when item is updated (e.g., voice selection changed)
+    var onItemUpdate: ((LibraryItem) -> Void)?
 
-    @MainActor init(item: LibraryItem, audioPlayer: AudioPlayerService? = nil) {
+    @MainActor init(item: LibraryItem, audioPlayer: AudioPlayerService? = nil, onItemUpdate: ((LibraryItem) -> Void)? = nil) {
         self.item = item
         self.audioPlayer = audioPlayer ?? AudioPlayerService.shared
+        self.onItemUpdate = onItemUpdate
 
         // Cache paragraphs and sentences once
         cacheTextData()
@@ -180,7 +183,19 @@ final class PlayerViewModel: ObservableObject {
 
         // Set selected voice from item
         if let voiceID = item.selectedVoiceID {
-            selectedVoice = VoiceProfile.builtInVoices.first { $0.id == voiceID } ?? .defaultVoice
+            // First check built-in voices
+            if let voice = VoiceProfile.builtInVoices.first(where: { $0.id == voiceID }) {
+                selectedVoice = voice
+            } else {
+                // Then check custom voices from UserDefaults
+                if let data = UserDefaults.standard.data(forKey: "custom_voices"),
+                   let customVoices = try? JSONDecoder().decode([VoiceProfile].self, from: data),
+                   let voice = customVoices.first(where: { $0.id == voiceID }) {
+                    selectedVoice = voice
+                } else {
+                    selectedVoice = .defaultVoice
+                }
+            }
         }
 
         // Load audio if ready
@@ -194,6 +209,15 @@ final class PlayerViewModel: ObservableObject {
                 )
             }
         }
+    }
+
+    /// Save voice selection to item and notify parent
+    func saveVoiceSelection(_ voice: VoiceProfile) {
+        var updatedItem = item
+        updatedItem.selectedVoiceID = voice.id
+        item = updatedItem
+        onItemUpdate?(updatedItem)
+        NSLog("[PlayerVM] Saved voice selection: \(voice.id) for item: \(item.id)")
     }
 
     /// Cache paragraph and sentence data to avoid re-computing on every render

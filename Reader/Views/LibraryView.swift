@@ -81,7 +81,13 @@ struct LibraryView: View {
                     .presentationDragIndicator(.visible)
             }
             .sheet(item: $selectedItem) { item in
-                PlayerView(item: item)
+                PlayerView(item: item) { updatedItem in
+                    // Find and update the item in viewModel
+                    if let index = viewModel.items.firstIndex(where: { $0.id == updatedItem.id }) {
+                        viewModel.items[index] = updatedItem
+                        viewModel.saveLibrary()
+                    }
+                }
             }
             .sheet(isPresented: $showModelSetup) {
                 modelSetupSheet
@@ -142,7 +148,9 @@ struct LibraryView: View {
 
         // Create a temporary PlayerViewModel to handle synthesis
         // Pass audioPlayer so it can update synthesis progress
-        let vm = PlayerViewModel(item: viewModel.items[itemIndex], audioPlayer: audioPlayer)
+        let vm = PlayerViewModel(item: viewModel.items[itemIndex], audioPlayer: audioPlayer) { updatedItem in
+            viewModel.items[itemIndex] = updatedItem
+        }
         await vm.generateOnly()
 
         NSLog("[LibraryView] generateOnly complete, vm.item.status: \(vm.item.status.rawValue), generatedChunks: \(vm.item.generatedChunks.count)")

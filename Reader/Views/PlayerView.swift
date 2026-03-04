@@ -15,8 +15,11 @@ struct PlayerView: View {
     @State private var scrollProxy: ScrollViewProxy?
     @State private var lastScrolledParagraph = -1
 
-    init(item: LibraryItem) {
-        _viewModel = StateObject(wrappedValue: PlayerViewModel(item: item))
+    /// Callback when item is updated (e.g., voice selection changed)
+    var onItemUpdate: ((LibraryItem) -> Void)?
+
+    init(item: LibraryItem, onItemUpdate: ((LibraryItem) -> Void)? = nil) {
+        _viewModel = StateObject(wrappedValue: PlayerViewModel(item: item, onItemUpdate: onItemUpdate))
     }
 
     var body: some View {
@@ -103,7 +106,10 @@ struct PlayerView: View {
             .sheet(isPresented: $viewModel.showVoiceSelector) {
                 VoiceSelectionView(
                     selectedVoice: $viewModel.selectedVoice,
-                    synthesisSettings: $viewModel.synthesisSettings
+                    synthesisSettings: $viewModel.synthesisSettings,
+                    onVoiceSelected: { voice in
+                        viewModel.saveVoiceSelection(voice)
+                    }
                 )
             }
             .sheet(isPresented: $showTextView) {

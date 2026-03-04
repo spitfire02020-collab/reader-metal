@@ -1,11 +1,14 @@
 import SwiftUI
 import AVFoundation
+import UniformTypeIdentifiers
 
 // MARK: - Voice Selection View
 
 struct VoiceSelectionView: View {
     @Binding var selectedVoice: VoiceProfile
     @Binding var synthesisSettings: SynthesisSettings
+    /// Callback when voice selection changes - saves to LibraryItem
+    var onVoiceSelected: ((VoiceProfile) -> Void)?
     @Environment(\.dismiss) private var dismiss
     @State private var showRecordVoice = false
     @State private var isRecording = false
@@ -13,6 +16,7 @@ struct VoiceSelectionView: View {
     @State private var audioRecorder: AVAudioRecorder?
     @State private var recordingTimer: Timer?
     @State private var customVoices: [VoiceProfile] = []
+    @State private var showFileImporter = false
 
     var body: some View {
         NavigationStack {
@@ -21,12 +25,14 @@ struct VoiceSelectionView: View {
                     // Header
                     headerSection
 
-                    // Built-in Voices
-                    voiceSection(title: "Built-in Voices", voices: VoiceProfile.builtInVoices)
+                    // Built-in Voices (using default reference audio)
+                    voiceSection(title: "Built-in Voices (Default)", voices: VoiceProfile.builtInVoices)
 
                     // Custom Voices (cloned)
                     if !customVoices.isEmpty {
-                        voiceSection(title: "Your Voices", voices: customVoices)
+                        voiceSection(title: "Your Voices", voices: customVoices, allowDelete: true) { voice in
+                            deleteCustomVoice(voice)
+                        }
                     }
 
                     // Clone Voice Section
@@ -52,6 +58,13 @@ struct VoiceSelectionView: View {
             .sheet(isPresented: $showRecordVoice) {
                 recordVoiceSheet
             }
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.audio, .wav, .mp3, UTType(filenameExtension: "wav") ?? .audio, UTType(filenameExtension: "mp3") ?? .audio],
+                allowsMultipleSelection: false
+            ) { result in
+                handleFileImport(result)
+            }
             .onAppear {
                 loadCustomVoices()
             }
@@ -67,17 +80,27 @@ struct VoiceSelectionView: View {
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(Color.appTextPrimary)
 
-            Text("Select a built-in voice or clone your own using Chatterbox Turbo's zero-shot voice cloning")
+            Text("Select a built-in voice, import an audio file, or clone your own voice for consistent TTS output")
                 .font(.system(size: 14))
                 .foregroundStyle(Color.appTextSecondary)
                 .multilineTextAlignment(.center)
+
+            // Tip about consistent generation
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10))
+                Text("Tip: Use a fixed seed + cloned voice for reproducible results")
+                    .font(.system(size: 11))
+            }
+            .foregroundStyle(Color.appAccent)
+            .padding(.top, 4)
         }
         .padding(.top, 8)
     }
 
     // MARK: - Voice Section
 
-    private func voiceSection(title: String, voices: [VoiceProfile]) -> some View {
+    private func voiceSection(title: String, voices: [VoiceProfile], allowDelete: Bool = false, onDelete: ((VoiceProfile) -> Void)? = nil) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
@@ -87,7 +110,18 @@ struct VoiceSelectionView: View {
 
             VStack(spacing: 6) {
                 ForEach(voices) { voice in
-                    voiceCard(voice)
+                    if allowDelete, let onDelete = onDelete {
+                        voiceCard(voice)
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    onDelete(voice)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                    } else {
+                        voiceCard(voice)
+                    }
                 }
             }
         }
@@ -97,6 +131,8 @@ struct VoiceSelectionView: View {
         Button {
             withAnimation(.easeInOut(duration: 0.2)) {
                 selectedVoice = voice
+                // Notify parent to save voice selection
+                onVoiceSelected?(voice)
             }
         } label: {
             HStack(spacing: 14) {
@@ -231,6 +267,51 @@ struct VoiceSelectionView: View {
                 )
             }
             .buttonStyle(.plain)
+
+            // Import audio file button
+            Button {
+                showFileImporter = true
+            } label: {
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.appAccentSubtle.opacity(0.5))
+                            .frame(width: 44, height: 44)
+
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Color.appAccent)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Import Audio File")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.appTextPrimary)
+
+                        Text("Import a .wav or .mp3 file as reference audio")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.appTextSecondary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.appTextTertiary)
+                }
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.appSurface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                                .foregroundStyle(Color.appAccent.opacity(0.3))
+                        )
+                )
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -245,30 +326,49 @@ struct VoiceSelectionView: View {
                 .tracking(0.5)
 
             VStack(spacing: 16) {
-                // Seed input
-                HStack {
-                    Text("Seed")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.appTextPrimary)
+                // Seed input with consistent generation info
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Seed")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.appTextPrimary)
 
-                    Spacer()
+                        Spacer()
 
-                    TextField("Random", value: $synthesisSettings.seed, format: .number)
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 120)
-                        .padding(8)
-                        .background(Color.appSurfaceElevated)
-                        .cornerRadius(8)
-                        .foregroundStyle(Color.appTextPrimary)
+                        TextField("Random", value: $synthesisSettings.seed, format: .number)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 120)
+                            .padding(8)
+                            .background(Color.appSurfaceElevated)
+                            .cornerRadius(8)
+                            .foregroundStyle(Color.appTextPrimary)
+                    }
+
+                    // Seed + Voice combo tip
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.appAccent)
+
+                        Text("Combine with a fixed voice (built-in or cloned) + non-zero seed for consistent output across generations.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.appTextSecondary)
+                    }
                 }
 
                 Divider().background(Color.appTextTertiary.opacity(0.3))
 
-                // Seed info
-                Text("Set a seed for reproducible output. Use 0 for random.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.appTextSecondary)
+                // Tip about reproducible output
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.appAccent)
+
+                    Text("Set a seed (e.g., 42) to get the same output every time. Use 0 for random.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.appTextSecondary)
+                }
             }
             .padding(16)
             .background(
@@ -495,6 +595,61 @@ struct VoiceSelectionView: View {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
     }
 
+    // MARK: - File Import
+
+    private func handleFileImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let sourceURL = urls.first else { return }
+
+            // Start accessing security-scoped resource
+            guard sourceURL.startAccessingSecurityScopedResource() else {
+                NSLog("[VoiceSelection] Failed to access security-scoped resource")
+                return
+            }
+            defer { sourceURL.stopAccessingSecurityScopedResource() }
+
+            // Copy file to app's documents
+            let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let voicesDir = docsURL.appendingPathComponent("VoiceSamples", isDirectory: true)
+            try? FileManager.default.createDirectory(at: voicesDir, withIntermediateDirectories: true)
+
+            let fileName = sourceURL.lastPathComponent
+            let destURL = voicesDir.appendingPathComponent("\(UUID().uuidString)_\(fileName)")
+
+            do {
+                try FileManager.default.copyItem(at: sourceURL, to: destURL)
+
+                // Create voice profile from imported file
+                let voiceName = sourceURL.deletingPathExtension().lastPathComponent
+                let voice = VoiceProfile(
+                    id: UUID().uuidString,
+                    name: voiceName,
+                    description: "Imported voice from file",
+                    isBuiltIn: false,
+                    referenceAudioPath: destURL.path,
+                    sampleRate: 24000,
+                    language: "en",
+                    tags: ["imported"]
+                )
+
+                customVoices.append(voice)
+                saveCustomVoices()
+                selectedVoice = voice
+
+                // Notify parent to save
+                onVoiceSelected?(voice)
+
+                NSLog("[VoiceSelection] Imported voice: \(voiceName) from \(fileName)")
+            } catch {
+                NSLog("[VoiceSelection] Failed to import file: \(error)")
+            }
+
+        case .failure(let error):
+            NSLog("[VoiceSelection] File import error: \(error)")
+        }
+    }
+
     // MARK: - Custom Voice Persistence
 
     private func loadCustomVoices() {
@@ -508,5 +663,24 @@ struct VoiceSelectionView: View {
         if let data = try? JSONEncoder().encode(customVoices) {
             UserDefaults.standard.set(data, forKey: "custom_voices")
         }
+    }
+
+    private func deleteCustomVoice(_ voice: VoiceProfile) {
+        // Remove from array
+        customVoices.removeAll { $0.id == voice.id }
+        saveCustomVoices()
+
+        // Delete the audio file if it exists
+        if let path = voice.referenceAudioPath {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+
+        // If deleted voice was selected, switch to default
+        if selectedVoice.id == voice.id {
+            selectedVoice = .defaultVoice
+            onVoiceSelected?(.defaultVoice)
+        }
+
+        NSLog("[VoiceSelection] Deleted custom voice: \(voice.name)")
     }
 }
