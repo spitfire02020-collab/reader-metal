@@ -117,10 +117,15 @@ final class PlayerViewModel: ObservableObject {
     /// Load existing chunks from disk
     func loadExistingChunks() {
         let dir = chunkDirectory
-        guard FileManager.default.fileExists(atPath: dir.path) else { return }
+        NSLog("[PlayerVM] loadExistingChunks: checking \(dir.path)")
+        guard FileManager.default.fileExists(atPath: dir.path) else {
+            NSLog("[PlayerVM] loadExistingChunks: directory does not exist")
+            return
+        }
 
         do {
             let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            NSLog("[PlayerVM] loadExistingChunks: found \(files.count) files")
             for file in files where file.pathExtension == "wav" {
                 // Extract chunk index from filename like "chunk_0.wav"
                 if let indexStr = file.deletingPathExtension().lastPathComponent.split(separator: "_").last,
@@ -131,6 +136,7 @@ final class PlayerViewModel: ObservableObject {
                     NSLog("[PlayerVM] Loaded existing chunk \(index) from \(file.lastPathComponent)")
                 }
             }
+            NSLog("[PlayerVM] loadExistingChunks: loaded \(item.generatedChunks.count) chunks, audioPlayer.hasAudioFiles = \(audioPlayer.hasAudioFiles)")
         } catch {
             NSLog("[PlayerVM] Failed to load existing chunks: \(error)")
         }
@@ -513,7 +519,7 @@ final class PlayerViewModel: ObservableObject {
     // MARK: - Synthesis
 
     func startSynthesis() async {
-        NSLog("[PlayerVM] startSynthesis called, item.status=\(item.status.rawValue)")
+        NSLog("[PlayerVM] startSynthesis called, item.status=\(item.status.rawValue), generatedChunks.count=\(item.generatedChunks.count), audioPlayer.hasAudioFiles=\(audioPlayer.hasAudioFiles)")
 
         // If audio is already ready (single file), play the existing file
         if item.status == .ready, let audioPath = item.audioFileURL, !audioPath.isEmpty {
@@ -527,14 +533,19 @@ final class PlayerViewModel: ObservableObject {
         }
 
         // If chunks already exist (from generateOnly), play them
-        if item.status == .ready && !item.generatedChunks.isEmpty {
-            NSLog("[PlayerVM] Using existing chunks for playback")
+        // Check both .ready and .processing status - if chunks exist, use them
+        if (!item.generatedChunks.isEmpty || audioPlayer.hasAudioFiles) && item.status != .pending {
+            NSLog("[PlayerVM] Using existing chunks for playback, status=\(item.status.rawValue)")
             // loadExistingChunks was already called in init, just start playing
             if audioPlayer.hasAudioFiles {
                 audioPlayer.play()
                 NSLog("[PlayerVM] Started playing chunks")
                 return
+            } else {
+                NSLog("[PlayerVM] WARNING: chunks exist but audioPlayer.hasAudioFiles is false!")
             }
+        } else {
+            NSLog("[PlayerVM] Cannot use chunks: status=\(item.status.rawValue), generatedChunks.isEmpty=\(item.generatedChunks.isEmpty), hasAudioFiles=\(audioPlayer.hasAudioFiles)")
         }
 
         // Check if models are downloaded first
@@ -700,10 +711,12 @@ final class PlayerViewModel: ObservableObject {
                 if FileManager.default.fileExists(atPath: outputURL.path) {
                     allChunkURLs.append(outputURL)
                     item.generatedChunks[index] = outputURL.path
+                    NSLog("[PlayerVM] Chunk \(index) already exists, tracking: \(outputURL.path)")
                     continue
                 }
 
                 // Generate this chunk
+                NSLog("[PlayerVM] Generating chunk \(index)/\(chunks.count): \(chunkText.prefix(50))...")
                 try await engine.synthesize(
                     text: chunkText,
                     referenceAudioURL: refAudioURL,

@@ -127,8 +127,14 @@ struct LibraryView: View {
 
     // Handle start generation from library (background download - no playback)
     private func handleStartGeneration(_ item: LibraryItem) async {
+        NSLog("[LibraryView] handleStartGeneration called for: \(item.title), id: \(item.id)")
         // Find the item in viewModel to get the latest state
-        guard let itemIndex = viewModel.items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard let itemIndex = viewModel.items.firstIndex(where: { $0.id == item.id }) else {
+            NSLog("[LibraryView] ERROR: item not found in viewModel.items")
+            return
+        }
+
+        NSLog("[LibraryView] Found item at index \(itemIndex), current status: \(viewModel.items[itemIndex].status.rawValue)")
 
         // Update status to processing
         viewModel.items[itemIndex].status = .processing
@@ -139,11 +145,12 @@ struct LibraryView: View {
         let vm = PlayerViewModel(item: viewModel.items[itemIndex], audioPlayer: audioPlayer)
         await vm.generateOnly()
 
+        NSLog("[LibraryView] generateOnly complete, vm.item.status: \(vm.item.status.rawValue), generatedChunks: \(vm.item.generatedChunks.count)")
+
         // Update the item in viewModel with generated chunks and status
-        if let updatedItem = vm.item as LibraryItem? {
-            viewModel.items[itemIndex] = updatedItem
-            viewModel.saveLibrary()
-        }
+        viewModel.items[itemIndex] = vm.item
+        NSLog("[LibraryView] Updated viewModel.items[\(itemIndex)], new status: \(viewModel.items[itemIndex].status.rawValue)")
+        viewModel.saveLibrary()
     }
 
     // MARK: - Model Status Banner - Redesigned

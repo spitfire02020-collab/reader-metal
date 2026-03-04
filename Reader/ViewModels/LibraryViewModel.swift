@@ -68,10 +68,15 @@ final class LibraryViewModel: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: storageKey),
            let decoded = try? JSONDecoder().decode([LibraryItem].self, from: data) {
             // Sanitize HTML entities in titles that may have been stored before entity decoding was in place
+            // Also reset .processing status to .pending (app was likely killed during generation)
             items = decoded.map { item in
-                guard item.title.contains("&") else { return item }
+                guard item.title.contains("&") || item.status == .processing else { return item }
                 var mutable = item
                 mutable.title = item.title.decodedHTMLEntities
+                // Reset processing status - generation was interrupted
+                if mutable.status == .processing {
+                    mutable.status = .pending
+                }
                 return mutable
             }
         }
