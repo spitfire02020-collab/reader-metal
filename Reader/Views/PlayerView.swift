@@ -28,15 +28,17 @@ struct PlayerView: View {
                     .noiseTexture(opacity: 0.02)
 
                 // Main content - full screen text area
-                ZStack(alignment: .bottom) {
+                ZStack {
                     // Full-screen text section
                     textSection
                         .gesture(tapGesture)
-                        .padding(.bottom, showControls ? 0 : 0)
 
-                    // Floating controls overlay with glassmorphism
+                    // Floating controls overlay with glassmorphism - properly inset from safe area
                     if showControls {
-                        floatingControls
+                        VStack {
+                            Spacer()
+                            floatingControls
+                        }
                     }
                 }
             }
@@ -423,7 +425,6 @@ struct PlayerView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 32)
         }
-        .frame(height: 180)
         .background(
             LinearGradient(
                 colors: [
