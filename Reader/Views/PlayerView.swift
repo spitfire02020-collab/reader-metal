@@ -13,6 +13,7 @@ struct PlayerView: View {
     // Auto-scroll state
     @State private var autoScrollEnabled = true
     @State private var scrollProxy: ScrollViewProxy?
+    @State private var lastScrolledParagraph = -1
 
     init(item: LibraryItem) {
         _viewModel = StateObject(wrappedValue: PlayerViewModel(item: item))
@@ -152,9 +153,13 @@ struct PlayerView: View {
                 }
                 .onChange(of: viewModel.currentChunkIndex) { _, newIndex in
                     viewModel.updatePlayingIndex()
-                    // Auto-scroll to the current paragraph
+                    // Auto-scroll only when paragraph actually changes
                     if autoScrollEnabled, newIndex >= 0 {
-                        scrollToParagraph(chunkIndex: newIndex, proxy: proxy)
+                        let targetParagraph = findParagraphIndex(for: newIndex)
+                        if targetParagraph != lastScrolledParagraph && targetParagraph >= 0 {
+                            lastScrolledParagraph = targetParagraph
+                            scrollToParagraph(chunkIndex: newIndex, proxy: proxy)
+                        }
                     }
                 }
                 .simultaneousGesture(
@@ -206,6 +211,7 @@ struct PlayerView: View {
     private func backToCurrentButton(proxy: ScrollViewProxy?) -> some View {
         Button {
             autoScrollEnabled = true
+            lastScrolledParagraph = -1 // Reset to force scroll
             if let proxy = proxy {
                 scrollToParagraph(chunkIndex: viewModel.currentChunkIndex, proxy: proxy)
             }
