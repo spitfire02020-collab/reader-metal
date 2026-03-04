@@ -1,0 +1,594 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		78C287C2AA12AEC244C1CDD7 /* Pods_Reader.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 541268EA0A540A9AE7729F7F /* Pods_Reader.framework */; };
+		AA000001 /* ReaderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001 /* ReaderApp.swift */; };
+		AA000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000002 /* ContentView.swift */; };
+		AA000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BB000003 /* Assets.xcassets */; };
+		AA000004 /* ChatterboxEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000004 /* ChatterboxEngine.swift */; };
+		AA000005 /* AudioPlayerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000005 /* AudioPlayerService.swift */; };
+		AA000006 /* WebContentExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000006 /* WebContentExtractor.swift */; };
+		AA000007 /* BookParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000007 /* BookParser.swift */; };
+		AA000008 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000008 /* LibraryView.swift */; };
+		AA000009 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000009 /* PlayerView.swift */; };
+		AA000010 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000010 /* SettingsView.swift */; };
+		AA000011 /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000011 /* LibraryViewModel.swift */; };
+		AA000012 /* PlayerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000012 /* PlayerViewModel.swift */; };
+		AA000013 /* LibraryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000013 /* LibraryItem.swift */; };
+		AA000014 /* VoiceProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000014 /* VoiceProfile.swift */; };
+		AA000015 /* Color+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000015 /* Color+Extensions.swift */; };
+		AA000016 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000016 /* WaveformView.swift */; };
+		AA000017 /* MiniPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000017 /* MiniPlayerView.swift */; };
+		AA000018 /* AddContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000018 /* AddContentView.swift */; };
+		AA000019 /* VoiceSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000019 /* VoiceSelectionView.swift */; };
+		AA000020 /* ModelDownloadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000020 /* ModelDownloadService.swift */; };
+		AA000021 /* TextChunker.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000021 /* TextChunker.swift */; };
+		AA000022 /* TokenizerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000022 /* TokenizerService.swift */; };
+		AA000025 /* ONNXGraphFixer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000025 /* ONNXGraphFixer.swift */; };
+		AA000026 /* SelectableTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000026 /* SelectableTextView.swift */; };
+		BA308A7C2F4C6DFF0077C971 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = BA308A7B2F4C6DFF0077C971 /* onnxruntime */; };
+		BA308A7E2F4C6DFF0077C971 /* onnxruntime_extensions in Frameworks */ = {isa = PBXBuildFile; productRef = BA308A7D2F4C6DFF0077C971 /* onnxruntime_extensions */; };
+		BAAC493F2F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BAAC49372F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx */; };
+		BAAC49402F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx_data in Resources */ = {isa = PBXBuildFile; fileRef = BAAC493C2F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx_data */; };
+		BAAC49412F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx_data in Resources */ = {isa = PBXBuildFile; fileRef = BAAC49382F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx_data */; };
+		BAAC49422F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BAAC49342F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx */; };
+		BAAC49432F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx_data in Resources */ = {isa = PBXBuildFile; fileRef = BAAC49352F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx_data */; };
+		BAAC49442F55FB0D00ADDCFD /* language_model_q4f16.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BAAC49392F55FB0D00ADDCFD /* language_model_q4f16.onnx */; };
+		BAAC49452F55FB0D00ADDCFD /* tokenizer.json in Resources */ = {isa = PBXBuildFile; fileRef = BAAC493D2F55FB0D00ADDCFD /* tokenizer.json */; };
+		BAAC49462F55FB0D00ADDCFD /* language_model_q4f16.onnx_data in Resources */ = {isa = PBXBuildFile; fileRef = BAAC493A2F55FB0D00ADDCFD /* language_model_q4f16.onnx_data */; };
+		BAAC49472F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BAAC493B2F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx */; };
+		BAAC49482F55FB0D00ADDCFD /* default_voice.wav in Resources */ = {isa = PBXBuildFile; fileRef = BAAC49362F55FB0D00ADDCFD /* default_voice.wav */; };
+		BAAC49492F55FB0D00ADDCFD /* speech_encoder_q4f16_fixed.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BB000040 /* speech_encoder_q4f16_fixed.onnx */; };
+		BAAC494A2F55FB0D00ADDCFD /* embed_tokens_q4f16_fixed.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BB000041 /* embed_tokens_q4f16_fixed.onnx */; };
+		BAAC494B2F55FB0D00ADDCFD /* language_model_q4f16_fixed.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BB000042 /* language_model_q4f16_fixed.onnx */; };
+		BAAC494C2F55FB0D00ADDCFD /* conditional_decoder_q4f16_fixed.onnx in Resources */ = {isa = PBXBuildFile; fileRef = BB000043 /* conditional_decoder_q4f16_fixed.onnx */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1041BD6CE28827203F11E7B6 /* Pods-Reader.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Reader.release.xcconfig"; path = "Target Support Files/Pods-Reader/Pods-Reader.release.xcconfig"; sourceTree = "<group>"; };
+		541268EA0A540A9AE7729F7F /* Pods_Reader.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Reader.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		BAAC49342F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx; sourceTree = "<group>"; };
+		BAAC49352F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx_data; sourceTree = "<group>"; };
+		BAAC49362F55FB0D00ADDCFD /* default_voice.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = default_voice.wav; sourceTree = "<group>"; };
+		BAAC49372F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = embed_tokens_q4f16.onnx; sourceTree = "<group>"; };
+		BAAC49382F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = text; path = embed_tokens_q4f16.onnx_data; sourceTree = "<group>"; };
+		BAAC49392F55FB0D00ADDCFD /* language_model_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = language_model_q4f16.onnx; sourceTree = "<group>"; };
+		BAAC493A2F55FB0D00ADDCFD /* language_model_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = text; path = language_model_q4f16.onnx_data; sourceTree = "<group>"; };
+		BAAC493B2F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = speech_encoder_q4f16.onnx; sourceTree = "<group>"; };
+		BAAC493C2F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = speech_encoder_q4f16.onnx_data; sourceTree = "<group>"; };
+		BAAC493D2F55FB0D00ADDCFD /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		BB000000 /* Reader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB000001 /* ReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderApp.swift; sourceTree = "<group>"; };
+		BB000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		BB000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		BB000004 /* ChatterboxEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatterboxEngine.swift; sourceTree = "<group>"; };
+		BB000005 /* AudioPlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerService.swift; sourceTree = "<group>"; };
+		BB000006 /* WebContentExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentExtractor.swift; sourceTree = "<group>"; };
+		BB000007 /* BookParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookParser.swift; sourceTree = "<group>"; };
+		BB000008 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		BB000009 /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		BB000010 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		BB000011 /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
+		BB000012 /* PlayerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViewModel.swift; sourceTree = "<group>"; };
+		BB000013 /* LibraryItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryItem.swift; sourceTree = "<group>"; };
+		BB000014 /* VoiceProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProfile.swift; sourceTree = "<group>"; };
+		BB000015 /* Color+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Color+Extensions.swift"; sourceTree = "<group>"; };
+		BB000016 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
+		BB000017 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
+		BB000018 /* AddContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContentView.swift; sourceTree = "<group>"; };
+		BB000019 /* VoiceSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSelectionView.swift; sourceTree = "<group>"; };
+		BB000020 /* ModelDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadService.swift; sourceTree = "<group>"; };
+		BB000021 /* TextChunker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextChunker.swift; sourceTree = "<group>"; };
+		BB000022 /* TokenizerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenizerService.swift; sourceTree = "<group>"; };
+		BB000023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		BB000025 /* ONNXGraphFixer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ONNXGraphFixer.swift; sourceTree = "<group>"; };
+		BB000026 /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
+		BB000030 /* speech_encoder_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = speech_encoder_q4f16.onnx; sourceTree = "<group>"; };
+		BB000031 /* embed_tokens_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = embed_tokens_q4f16.onnx; sourceTree = "<group>"; };
+		BB000032 /* language_model_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = language_model_q4f16.onnx; sourceTree = "<group>"; };
+		BB000033 /* conditional_decoder_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx; sourceTree = "<group>"; };
+		BB000034 /* speech_encoder_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = speech_encoder_q4f16.onnx_data; sourceTree = "<group>"; };
+		BB000035 /* embed_tokens_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = embed_tokens_q4f16.onnx_data; sourceTree = "<group>"; };
+		BB000036 /* language_model_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = language_model_q4f16.onnx_data; sourceTree = "<group>"; };
+		BB000037 /* conditional_decoder_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx_data; sourceTree = "<group>"; };
+		BB000038 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		BB000039 /* default_voice.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = default_voice.wav; sourceTree = "<group>"; };
+		BB000040 /* speech_encoder_q4f16_fixed.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ChatterboxModels/speech_encoder_q4f16_fixed.onnx; sourceTree = "<group>"; };
+		BB000041 /* embed_tokens_q4f16_fixed.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ChatterboxModels/embed_tokens_q4f16_fixed.onnx; sourceTree = "<group>"; };
+		BB000042 /* language_model_q4f16_fixed.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ChatterboxModels/language_model_q4f16_fixed.onnx; sourceTree = "<group>"; };
+		BB000043 /* conditional_decoder_q4f16_fixed.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ChatterboxModels/conditional_decoder_q4f16_fixed.onnx; sourceTree = "<group>"; };
+		EE926037A75BFC7D29505DBC /* Pods-Reader.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Reader.debug.xcconfig"; path = "Target Support Files/Pods-Reader/Pods-Reader.debug.xcconfig"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		CC000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BA308A7E2F4C6DFF0077C971 /* onnxruntime_extensions in Frameworks */,
+				BA308A7C2F4C6DFF0077C971 /* onnxruntime in Frameworks */,
+				78C287C2AA12AEC244C1CDD7 /* Pods_Reader.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		63E08D74153356E9BDD2AEC5 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				EE926037A75BFC7D29505DBC /* Pods-Reader.debug.xcconfig */,
+				1041BD6CE28827203F11E7B6 /* Pods-Reader.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
+			sourceTree = "<group>";
+		};
+		BAAC493E2F55FB0D00ADDCFD /* ChatterboxModels */ = {
+			isa = PBXGroup;
+			children = (
+				BAAC49342F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx */,
+				BAAC49352F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx_data */,
+				BAAC49362F55FB0D00ADDCFD /* default_voice.wav */,
+				BAAC49372F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx */,
+				BAAC49382F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx_data */,
+				BAAC49392F55FB0D00ADDCFD /* language_model_q4f16.onnx */,
+				BAAC493A2F55FB0D00ADDCFD /* language_model_q4f16.onnx_data */,
+				BAAC493B2F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx */,
+				BAAC493C2F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx_data */,
+				BAAC493D2F55FB0D00ADDCFD /* tokenizer.json */,
+			);
+			path = Reader/Resources/ChatterboxModels;
+			sourceTree = "<group>";
+		};
+		DD000000 = {
+			isa = PBXGroup;
+			children = (
+				BAAC493E2F55FB0D00ADDCFD /* ChatterboxModels */,
+				DD000001 /* Reader */,
+				DD000009 /* Products */,
+				63E08D74153356E9BDD2AEC5 /* Pods */,
+				F8FACA75E5D81238C7F098B0 /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		DD000001 /* Reader */ = {
+			isa = PBXGroup;
+			children = (
+				BB000001 /* ReaderApp.swift */,
+				BB000002 /* ContentView.swift */,
+				BB000023 /* Info.plist */,
+				DD000002 /* Models */,
+				DD000003 /* Services */,
+				DD000004 /* Views */,
+				DD000005 /* ViewModels */,
+				DD000006 /* Components */,
+				DD000007 /* Extensions */,
+				DD000008 /* Resources */,
+			);
+			path = Reader;
+			sourceTree = "<group>";
+		};
+		DD000002 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				BB000013 /* LibraryItem.swift */,
+				BB000014 /* VoiceProfile.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		DD000003 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				BB000004 /* ChatterboxEngine.swift */,
+				BB000005 /* AudioPlayerService.swift */,
+				BB000006 /* WebContentExtractor.swift */,
+				BB000007 /* BookParser.swift */,
+				BB000020 /* ModelDownloadService.swift */,
+				BB000021 /* TextChunker.swift */,
+				BB000022 /* TokenizerService.swift */,
+				BB000025 /* ONNXGraphFixer.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		DD000004 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				BB000008 /* LibraryView.swift */,
+				BB000009 /* PlayerView.swift */,
+				BB000010 /* SettingsView.swift */,
+				BB000018 /* AddContentView.swift */,
+				BB000019 /* VoiceSelectionView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		DD000005 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				BB000011 /* LibraryViewModel.swift */,
+				BB000012 /* PlayerViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		DD000006 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				BB000016 /* WaveformView.swift */,
+				BB000017 /* MiniPlayerView.swift */,
+				BB000026 /* SelectableTextView.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		DD000007 /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				BB000015 /* Color+Extensions.swift */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
+		DD000008 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				BB000003 /* Assets.xcassets */,
+				BB000030 /* speech_encoder_q4f16.onnx */,
+				BB000031 /* embed_tokens_q4f16.onnx */,
+				BB000032 /* language_model_q4f16.onnx */,
+				BB000033 /* conditional_decoder_q4f16.onnx */,
+				BB000034 /* speech_encoder_q4f16.onnx_data */,
+				BB000035 /* embed_tokens_q4f16.onnx_data */,
+				BB000036 /* language_model_q4f16.onnx_data */,
+				BB000037 /* conditional_decoder_q4f16.onnx_data */,
+				BB000038 /* tokenizer.json */,
+				BB000039 /* default_voice.wav */,
+				BB000040 /* speech_encoder_q4f16_fixed.onnx */,
+				BB000041 /* embed_tokens_q4f16_fixed.onnx */,
+				BB000042 /* language_model_q4f16_fixed.onnx */,
+				BB000043 /* conditional_decoder_q4f16_fixed.onnx */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		DD000009 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				BB000000 /* Reader.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F8FACA75E5D81238C7F098B0 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				541268EA0A540A9AE7729F7F /* Pods_Reader.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		EE000001 /* Reader */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FF000003 /* Build configuration list for PBXNativeTarget "Reader" */;
+			buildPhases = (
+				94458F4A3209163E9EBAD4A5 /* [CP] Check Pods Manifest.lock */,
+				CC000002 /* Sources */,
+				CC000001 /* Frameworks */,
+				CC000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Reader;
+			packageProductDependencies = (
+				BA308A7B2F4C6DFF0077C971 /* onnxruntime */,
+				BA308A7D2F4C6DFF0077C971 /* onnxruntime_extensions */,
+			);
+			productName = Reader;
+			productReference = BB000000 /* Reader.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		EE000000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1540;
+				LastUpgradeCheck = 1540;
+				TargetAttributes = {
+					EE000001 = {
+						CreatedOnToolsVersion = 15.4;
+					};
+				};
+			};
+			buildConfigurationList = FF000001 /* Build configuration list for PBXProject "Reader" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = DD000000;
+			packageReferences = (
+				BA308A7A2F4C6DFF0077C971 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
+			);
+			productRefGroup = DD000009 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				EE000001 /* Reader */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		CC000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BAAC493F2F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx in Resources */,
+				BAAC49402F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx_data in Resources */,
+				BAAC49412F55FB0D00ADDCFD /* embed_tokens_q4f16.onnx_data in Resources */,
+				BAAC49422F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx in Resources */,
+				BAAC49432F55FB0D00ADDCFD /* conditional_decoder_q4f16.onnx_data in Resources */,
+				BAAC49442F55FB0D00ADDCFD /* language_model_q4f16.onnx in Resources */,
+				BAAC49452F55FB0D00ADDCFD /* tokenizer.json in Resources */,
+				BAAC49462F55FB0D00ADDCFD /* language_model_q4f16.onnx_data in Resources */,
+				BAAC49472F55FB0D00ADDCFD /* speech_encoder_q4f16.onnx in Resources */,
+				BAAC49482F55FB0D00ADDCFD /* default_voice.wav in Resources */,
+				BAAC49492F55FB0D00ADDCFD /* speech_encoder_q4f16_fixed.onnx in Resources */,
+				BAAC494A2F55FB0D00ADDCFD /* embed_tokens_q4f16_fixed.onnx in Resources */,
+				BAAC494B2F55FB0D00ADDCFD /* language_model_q4f16_fixed.onnx in Resources */,
+				BAAC494C2F55FB0D00ADDCFD /* conditional_decoder_q4f16_fixed.onnx in Resources */,
+				AA000003 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		94458F4A3209163E9EBAD4A5 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-Reader-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		CC000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA000001 /* ReaderApp.swift in Sources */,
+				AA000002 /* ContentView.swift in Sources */,
+				AA000004 /* ChatterboxEngine.swift in Sources */,
+				AA000005 /* AudioPlayerService.swift in Sources */,
+				AA000006 /* WebContentExtractor.swift in Sources */,
+				AA000007 /* BookParser.swift in Sources */,
+				AA000008 /* LibraryView.swift in Sources */,
+				AA000009 /* PlayerView.swift in Sources */,
+				AA000010 /* SettingsView.swift in Sources */,
+				AA000011 /* LibraryViewModel.swift in Sources */,
+				AA000012 /* PlayerViewModel.swift in Sources */,
+				AA000013 /* LibraryItem.swift in Sources */,
+				AA000014 /* VoiceProfile.swift in Sources */,
+				AA000015 /* Color+Extensions.swift in Sources */,
+				AA000016 /* WaveformView.swift in Sources */,
+				AA000017 /* MiniPlayerView.swift in Sources */,
+				AA000018 /* AddContentView.swift in Sources */,
+				AA000019 /* VoiceSelectionView.swift in Sources */,
+				AA000020 /* ModelDownloadService.swift in Sources */,
+				AA000021 /* TextChunker.swift in Sources */,
+				AA000022 /* TokenizerService.swift in Sources */,
+				AA000025 /* ONNXGraphFixer.swift in Sources */,
+				AA000026 /* SelectableTextView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		FF000002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		FF000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		FF000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = EE926037A75BFC7D29505DBC /* Pods-Reader.debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QRK36XKAV8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Reader/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Reader;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Reader needs microphone access to record voice samples for voice cloning.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportsDocumentBrowser = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.Reader;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FF000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1041BD6CE28827203F11E7B6 /* Pods-Reader.release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QRK36XKAV8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Reader/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Reader;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Reader needs microphone access to record voice samples for voice cloning.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportsDocumentBrowser = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.Reader;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		FF000001 /* Build configuration list for PBXProject "Reader" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FF000002 /* Debug */,
+				FF000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FF000003 /* Build configuration list for PBXNativeTarget "Reader" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FF000005 /* Debug */,
+				FF000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BA308A7A2F4C6DFF0077C971 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/microsoft/onnxruntime-swift-package-manager";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.20.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BA308A7B2F4C6DFF0077C971 /* onnxruntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BA308A7A2F4C6DFF0077C971 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
+			productName = onnxruntime;
+		};
+		BA308A7D2F4C6DFF0077C971 /* onnxruntime_extensions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BA308A7A2F4C6DFF0077C971 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
+			productName = onnxruntime_extensions;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = EE000000 /* Project object */;
+}

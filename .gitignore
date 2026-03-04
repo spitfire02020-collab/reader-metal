@@ -1,0 +1,42 @@
+# Build
+DerivedData/
+build/
+*.build/
+xcuserdata/
+*.xcuserstate
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+*.xcworkspace/contents.xcworkspacedata
+project.xcworkspace/
+*.pbxuser
+!default.pbxuser
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Large files
+*.zip
+*.wav
+*.mp3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Models (usually in separate repos)
+ChatterboxModels/
+
+# Claude
+.claude/
+
+# Documentation (if generated)
+Documentation/
