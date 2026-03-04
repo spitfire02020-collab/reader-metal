@@ -341,14 +341,28 @@ struct VoiceSelectionView: View {
 
                         Spacer()
 
-                        TextField("Random", value: $synthesisSettings.seed, format: .number)
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 120)
-                            .padding(8)
-                            .background(Color.appSurfaceElevated)
-                            .cornerRadius(8)
-                            .foregroundStyle(Color.appTextPrimary)
+                        HStack(spacing: 8) {
+                            TextField("Random", value: $synthesisSettings.seed, format: .number)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 80)
+                                .padding(8)
+                                .background(Color.appSurfaceElevated)
+                                .cornerRadius(8)
+                                .foregroundStyle(Color.appTextPrimary)
+
+                            Button {
+                                synthesisSettings.seed = Int.random(in: 1...999999)
+                            } label: {
+                                Image(systemName: "dice")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(Color.appAccent)
+                                    .frame(width: 32, height: 32)
+                                    .background(Color.appAccent.opacity(0.15))
+                                    .cornerRadius(8)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
 
                     // Seed + Voice combo tip
