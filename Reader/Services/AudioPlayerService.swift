@@ -36,6 +36,74 @@ final class AudioPlayerService: NSObject, ObservableObject {
     // Delegate uses this to decide whether to wait for more chunks
     @Published var isExpectingMoreChunks = false
 
+    // MARK: - Item Queue for Background Playback
+
+    /// Queue of items waiting to play (stored as item IDs)
+    @Published private(set) var playbackQueue: [UUID] = []
+
+    /// Currently playing item ID
+    @Published private(set) var currentPlayingItemID: UUID?
+
+    /// Progress tracking per item (itemID -> progress 0-1)
+    @Published private(set) var itemProgress: [UUID: Double] = [:]
+
+    /// Check if a specific item is in queue or playing
+    func isItemQueued(_ itemID: UUID) -> Bool {
+        currentPlayingItemID == itemID || playbackQueue.contains(itemID)
+    }
+
+    /// Get progress for a specific item
+    func progressForItem(_ itemID: UUID) -> Double {
+        itemProgress[itemID] ?? 0
+    }
+
+    /// Add item to playback queue
+    func enqueueItem(_ itemID: UUID) {
+        guard !isItemQueued(itemID) else { return }
+        playbackQueue.append(itemID)
+        itemProgress[itemID] = 0
+        NSLog("[AudioPlayer] Enqueued item: \(itemID), queue: \(playbackQueue)")
+    }
+
+    /// Update progress for current item
+    func updateItemProgress(_ itemID: UUID, progress: Double) {
+        itemProgress[itemID] = progress
+    }
+
+    /// Mark item as complete and move to next
+    func itemDidFinish(_ itemID: UUID) {
+        // Remove from queue if still there
+        if let index = playbackQueue.firstIndex(of: itemID) {
+            playbackQueue.remove(at: index)
+        }
+
+        // Clear current if it's this item
+        if currentPlayingItemID == itemID {
+            currentPlayingItemID = nil
+        }
+
+        // Remove progress tracking
+        itemProgress.removeValue(forKey: itemID)
+
+        // Start next item if available
+        if let nextItemID = playbackQueue.first {
+            currentPlayingItemID = nextItemID
+            // Notification will be sent to play next item
+            NSLog("[AudioPlayer] Moving to next item: \(nextItemID)")
+        }
+    }
+
+    /// Start playing an item (called when starting from library)
+    func startPlayingItem(_ itemID: UUID) {
+        // If something else is playing, enqueue this item
+        if currentPlayingItemID != nil && currentPlayingItemID != itemID {
+            enqueueItem(itemID)
+        } else {
+            currentPlayingItemID = itemID
+            itemProgress[itemID] = 0
+        }
+    }
+
     // Crossfade settings (matching server: 20ms equal-power crossfade)
     private let crossfadeDuration: TimeInterval = 0.020  // 20ms
 

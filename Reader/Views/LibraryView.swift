@@ -116,6 +116,20 @@ struct LibraryView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onReceive(NotificationCenter.default.publisher(for: .startGenerationFromLibrary)) { notification in
+            if let item = notification.userInfo?["item"] as? LibraryItem {
+                Task {
+                    await handleStartGeneration(item)
+                }
+            }
+        }
+    }
+
+    // Handle start generation from library
+    private func handleStartGeneration(_ item: LibraryItem) async {
+        // Create a temporary PlayerViewModel to handle synthesis
+        let vm = PlayerViewModel(item: item)
+        await vm.startSynthesis()
     }
 
     // MARK: - Model Status Banner - Redesigned
@@ -193,33 +207,32 @@ struct LibraryView: View {
     private var itemsList: some View {
         LazyVStack(spacing: 10) {
             ForEach(Array(viewModel.filteredItems.enumerated()), id: \.element.id) { index, item in
-                LibraryItemRow(item: item) {
-                    nowPlayingItem = item
-                    selectedItem = item
-                }
-                .contextMenu {
-                    if item.status == .pending {
-                        Button {
-                            Task { await viewModel.synthesize(item: item) }
-                        } label: {
-                            Label("Generate Audio", systemImage: "waveform")
-                        }
-                    }
-
-                    Button(role: .destructive) {
-                        viewModel.deleteItem(item)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                }
-                .transition(.asymmetric(
-                    insertion: .opacity.combined(with: .move(edge: .top)),
-                    removal: .opacity
-                ))
+                itemRow(for: item)
             }
         }
-        .padding(.horizontal, 14)
-        .animation(AppAnimation.smooth, value: viewModel.filteredItems.map { $0.id })
+    }
+
+    @ViewBuilder
+    private func itemRow(for item: LibraryItem) -> some View {
+        LibraryItemRow(item: item, onTap: {
+            nowPlayingItem = item
+            selectedItem = item
+        }, audioPlayer: audioPlayer)
+        .contextMenu {
+            if item.status == .pending {
+                Button {
+                    Task { await viewModel.synthesize(item: item) }
+                } label: {
+                    Label("Generate Audio", systemImage: "waveform")
+                }
+            }
+
+            Button(role: .destructive) {
+                viewModel.deleteItem(item)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
     }
 
     // MARK: - Empty State - Redesigned
@@ -492,8 +505,10 @@ struct ModelVariantCard: View {
 struct LibraryItemRow: View {
     let item: LibraryItem
     let onTap: () -> Void
+    @ObservedObject var audioPlayer: AudioPlayerService
 
     @State private var isPressed = false
+    @State private var isGenerating = false
 
     var body: some View {
         Button(action: onTap) {
@@ -530,6 +545,9 @@ struct LibraryItemRow: View {
                 }
 
                 Spacer()
+
+                // Download/Play button or progress
+                downloadButton
 
                 // Chevron with animation
                 Image(systemName: "chevron.right")
@@ -637,6 +655,79 @@ struct LibraryItemRow: View {
         case .ready: return "Ready"
         case .error: return "Error"
         }
+    }
+
+    /// Download/Generate button for quick-start from library
+    @ViewBuilder
+    private var downloadButton: some View {
+        let progress = audioPlayer.progressForItem(item.id)
+        let isCurrentItem = audioPlayer.currentPlayingItemID == item.id
+        let isQueued = audioPlayer.isItemQueued(item.id)
+
+        // Show progress circle if generating/queued
+        if item.status == .processing || isQueued || progress > 0 {
+            progressCircle(progress: progress)
+        }
+        // Show download button for pending/error items
+        else if item.status == .pending || item.status == .error {
+            generateButton
+        }
+        // Show play button for ready items or currently playing
+        else {
+            playIconButton(isCurrentItem: isCurrentItem)
+        }
+    }
+
+    private func progressCircle(progress: Double) -> some View {
+        ZStack {
+            Circle()
+                .stroke(Color.appAccent.opacity(0.3), lineWidth: 3)
+                .frame(width: 36, height: 36)
+
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(Color.appAccent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .frame(width: 36, height: 36)
+                .rotationEffect(.degrees(-90))
+
+            Text("\(Int(progress * 100))")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color.appAccent)
+        }
+    }
+
+    private var generateButton: some View {
+        Button {
+            handleGenerateTap()
+        } label: {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(Color.appAccent)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func playIconButton(isCurrentItem: Bool) -> some View {
+        Button {
+            // Handled by mini player
+        } label: {
+            Image(systemName: isCurrentItem ? "pause.circle.fill" : "play.circle.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(Color.appAccent)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func handleGenerateTap() {
+        // Add to queue
+        audioPlayer.startPlayingItem(item.id)
+
+        // Post notification to trigger generation
+        NotificationCenter.default.post(
+            name: .startGenerationFromLibrary,
+            object: nil,
+            userInfo: ["item": item]
+        )
     }
 
     private var statusIconColor: Color {

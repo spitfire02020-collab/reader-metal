@@ -188,3 +188,11 @@ extension LibraryItem {
         ),
     ]
 }
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    /// Posted when user taps generate button from library view
+    /// UserInfo contains "item": LibraryItem
+    static let startGenerationFromLibrary = Notification.Name("startGenerationFromLibrary")
+}
