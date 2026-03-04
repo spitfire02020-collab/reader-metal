@@ -109,15 +109,8 @@ struct PlayerView: View {
             .sheet(isPresented: $viewModel.showModelDownload) {
                 modelDownloadSheet
             }
-            .onAppear {
-                if viewModel.audioPlayer.isPlaying {
-                    autoHideControls()
-                }
-            }
             .onChange(of: viewModel.audioPlayer.isPlaying) { _, isPlaying in
-                if isPlaying {
-                    autoHideControls()
-                } else {
+                if !isPlaying {
                     withAnimation(AppAnimation.smooth) {
                         showControls = true
                     }
@@ -136,16 +129,6 @@ struct PlayerView: View {
                     showControls.toggle()
                 }
             }
-    }
-
-    private func autoHideControls() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            if viewModel.audioPlayer.isPlaying {
-                withAnimation(AppAnimation.smooth) {
-                    showControls = false
-                }
-            }
-        }
     }
 
     // MARK: - Text Section
