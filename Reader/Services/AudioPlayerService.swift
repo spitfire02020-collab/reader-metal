@@ -318,6 +318,35 @@ final class AudioPlayerService: NSObject, ObservableObject {
         }
     }
 
+    /// Load a persistent chunk into the audio queue
+    func loadChunk(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+
+        if audioFiles.isEmpty {
+            // First chunk - load as main audio
+            audioFiles = [url]
+            do {
+                audioPlayer = try AVAudioPlayer(contentsOf: url)
+                audioPlayer?.delegate = self
+                audioPlayer?.prepareToPlay()
+                duration = audioPlayer?.duration ?? 0
+            } catch {
+                NSLog("[AudioPlayer] Failed to load chunk: \(error)")
+            }
+        } else {
+            // Additional chunk - append to queue
+            audioFiles.append(url)
+            // Update duration
+            do {
+                let player = try AVAudioPlayer(contentsOf: url)
+                player.prepareToPlay()
+                duration += player.duration
+            } catch {
+                NSLog("[AudioPlayer] Failed to get chunk duration: \(error)")
+            }
+        }
+    }
+
     /// Load multiple chapter audio files
     func loadChapters(urls: [URL], title: String, artist: String, coverImage: UIImage? = nil) {
         audioFiles = urls

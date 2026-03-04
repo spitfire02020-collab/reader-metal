@@ -33,6 +33,8 @@ struct LibraryItem: Identifiable, Codable {
     var status: ItemStatus
     var audioFileURL: String?
     var progress: Double // 0.0 - 1.0
+    /// Track which chunks have been generated (chunk index -> file path)
+    var generatedChunks: [Int: String] = [:]
 
     var displayAuthor: String {
         author ?? (source == .webpage ? sourceURL?.hostFromURL ?? "Web" : "Unknown")

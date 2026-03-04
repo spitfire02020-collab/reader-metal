@@ -269,20 +269,30 @@ struct PlayerView: View {
         VStack(spacing: 0) {
             // Progress indicator
             VStack(spacing: 10) {
-                // Progress bar with glow
+                // Progress bar with glow - now draggable
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
+                        // Track background
                         RoundedRectangle(cornerRadius: 3)
                             .fill(Color.appSurfaceElevated.opacity(0.5))
-                            .frame(height: 4)
+                            .frame(height: 6)
 
+                        // Progress fill
                         RoundedRectangle(cornerRadius: 3)
                             .fill(AppGradients.accent)
-                            .frame(width: max(0, geometry.size.width * viewModel.synthesisProgress), height: 4)
+                            .frame(width: max(0, geometry.size.width * (viewModel.audioPlayer.duration > 0 ? viewModel.audioPlayer.progress : viewModel.synthesisProgress)), height: 6)
                             .shadow(color: Color.appAccent.opacity(0.5), radius: 6, y: 0)
                     }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let progress = max(0, min(1, value.location.x / geometry.size.width))
+                                viewModel.audioPlayer.seekToProgress(progress)
+                            }
+                    )
                 }
-                .frame(height: 4)
+                .frame(height: 6)
 
                 // Status text
                 HStack {
@@ -321,7 +331,7 @@ struct PlayerView: View {
 
                     Spacer()
 
-                    Text(viewModel.audioPlayer.formattedRemaining)
+                    Text(viewModel.audioPlayer.duration > 0 ? viewModel.audioPlayer.formattedRemaining : viewModel.formattedTotalDuration)
                         .font(AppTypography.mono)
                         .foregroundStyle(Color.appTextTertiary)
                 }

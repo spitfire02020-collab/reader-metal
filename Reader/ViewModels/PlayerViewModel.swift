@@ -45,6 +45,71 @@ final class PlayerViewModel: ObservableObject {
     private let engine = ChatterboxEngine()
     private let downloadService = ModelDownloadService.shared
 
+    /// Total duration - uses audio duration if available, otherwise estimated
+    var totalDuration: TimeInterval {
+        if audioPlayer.duration > 0 {
+            return audioPlayer.duration
+        }
+        return item.duration ?? TextChunker.estimateTotalDuration(for: item.textContent)
+    }
+
+    /// Formatted total duration string
+    var formattedTotalDuration: String {
+        formatTime(totalDuration)
+    }
+
+    private func formatTime(_ time: TimeInterval) -> String {
+        let totalSeconds = Int(time)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    // MARK: - Chunk Persistence
+
+    /// Get the directory for storing chunks for this item
+    private var chunkDirectory: URL {
+        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docsDir.appendingPathComponent("Audio/\(item.id.uuidString)", isDirectory: true)
+    }
+
+    /// Get the URL for a specific chunk
+    func chunkURL(for index: Int) -> URL {
+        return chunkDirectory.appendingPathComponent("chunk_\(index).wav")
+    }
+
+    /// Load existing chunks from disk
+    func loadExistingChunks() {
+        let dir = chunkDirectory
+        guard FileManager.default.fileExists(atPath: dir.path) else { return }
+
+        do {
+            let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            for file in files where file.pathExtension == "wav" {
+                // Extract chunk index from filename like "chunk_0.wav"
+                if let indexStr = file.deletingPathExtension().lastPathComponent.split(separator: "_").last,
+                   let index = Int(indexStr) {
+                    item.generatedChunks[index] = file.path
+                    // Load into audio player
+                    audioPlayer.loadChunk(file)
+                    NSLog("[PlayerVM] Loaded existing chunk \(index) from \(file.lastPathComponent)")
+                }
+            }
+        } catch {
+            NSLog("[PlayerVM] Failed to load existing chunks: \(error)")
+        }
+    }
+
+    /// Save chunk path when synthesis completes
+    private func saveChunkPath(_ url: URL, for index: Int) {
+        item.generatedChunks[index] = url.path
+    }
+
     private var cancellables = Set<AnyCancellable>()
 
     @MainActor init(item: LibraryItem, audioPlayer: AudioPlayerService? = nil) {
@@ -53,6 +118,9 @@ final class PlayerViewModel: ObservableObject {
 
         // Cache paragraphs and sentences once
         cacheTextData()
+
+        // Load existing chunks if any have been generated
+        loadExistingChunks()
 
         // Set selected voice from item
         if let voiceID = item.selectedVoiceID {
@@ -300,11 +368,11 @@ final class PlayerViewModel: ObservableObject {
                 NSLog("[PlayerVM] Models already loaded")
             }
 
-            let outputDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("Audio", isDirectory: true)
+            // Use chunk directory for persistent storage
+            let outputDir = chunkDirectory
             try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
-            let outputURL = outputDir.appendingPathComponent("\(item.id.uuidString)_from_chunk\(chunkIndex).wav")
+            let outputURL = outputDir.appendingPathComponent("chunk_\(chunkIndex).wav")
 
             var refAudioURL: URL?
             if let path = selectedVoice.referenceAudioPath {
@@ -326,6 +394,11 @@ final class PlayerViewModel: ObservableObject {
                 },
                 seed: synthesisSettings.seed
             )
+
+            // Save chunk paths to item
+            for (index, url) in allChunkURLs.enumerated() {
+                item.generatedChunks[chunkIndex + index] = url.path
+            }
 
             NSLog("[PlayerVM] All \(allChunkURLs.count) chunks ready, starting playback")
 
