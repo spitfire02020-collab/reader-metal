@@ -233,6 +233,12 @@ final class PlayerViewModel: ObservableObject {
         if isStreamingAudio || audioPlayer.isPlaying || !item.generatedChunks.isEmpty {
             NSLog("[PlayerVM] Voice changed during playback - restarting synthesis")
             restartWithNewVoice()
+        } else if !item.textContent.isEmpty {
+            // Nothing playing but text exists - start synthesis immediately
+            NSLog("[PlayerVM] Voice selected - starting synthesis with new voice")
+            Task {
+                await startSynthesis()
+            }
         }
     }
 
