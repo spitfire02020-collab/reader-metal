@@ -240,7 +240,7 @@ final class PlayerViewModel: ObservableObject {
     private func restartWithNewVoice() {
         // Stop current playback and synthesis
         audioPlayer.stop()
-        audioPlayer.audioFiles.removeAll()  // Clear audio files so it re-synthesizes
+        audioPlayer.clearAudioFiles()  // Clear audio files so it re-synthesizes
         synthesisTask?.cancel()
         isSynthesizing = false
         isStreamingAudio = false
