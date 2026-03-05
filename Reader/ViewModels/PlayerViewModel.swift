@@ -251,6 +251,10 @@ final class PlayerViewModel: ObservableObject {
         isSynthesizing = false
         isStreamingAudio = false
 
+        // Reset highlighting indices to sync with new playback from beginning
+        currentPlayingIndex = -1
+        audioPlayer.currentChunkIndex = 0
+
         // Clear generated chunks to force re-synthesis with new voice
         item.generatedChunks.removeAll()
 
@@ -456,8 +460,9 @@ final class PlayerViewModel: ObservableObject {
     }
 
     var canPlay: Bool {
-        // Ready with a saved file OR actively streaming the first synthesized chunks.
-        (item.status == .ready && item.audioFileURL != nil) || isStreamingAudio
+        // Ready with a saved file OR has generated chunks OR actively streaming.
+        // This supports both single audio file (audioFileURL) and chunk-based (generatedChunks) playback.
+        (item.status == .ready && (item.audioFileURL != nil || !item.generatedChunks.isEmpty)) || isStreamingAudio
     }
 
     /// Stop audio playback and cancel any ongoing synthesis
@@ -535,7 +540,7 @@ final class PlayerViewModel: ObservableObject {
             let outputURL = outputDir.appendingPathComponent("chunk_\(chunkIndex).wav")
 
             var refAudioURL: URL?
-            if let path = selectedVoice.referenceAudioPath {
+            if let path = selectedVoice.resolvedReferenceAudioPath {
                 refAudioURL = URL(fileURLWithPath: path)
             }
 
@@ -682,7 +687,7 @@ final class PlayerViewModel: ObservableObject {
 
             // Get reference audio for voice cloning
             var refAudioURL: URL?
-            if let path = selectedVoice.referenceAudioPath {
+            if let path = selectedVoice.resolvedReferenceAudioPath {
                 refAudioURL = URL(fileURLWithPath: path)
             }
 
@@ -775,8 +780,8 @@ final class PlayerViewModel: ObservableObject {
     func generateOnly() async {
         NSLog("[PlayerVM] generateOnly called for: \(item.title)")
 
-        // Check if already ready
-        if item.status == .ready && item.audioFileURL != nil {
+        // Check if already ready (either single file or chunks)
+        if item.status == .ready && (item.audioFileURL != nil || !item.generatedChunks.isEmpty) {
             NSLog("[PlayerVM] Audio already ready")
             return
         }
@@ -804,7 +809,7 @@ final class PlayerViewModel: ObservableObject {
 
             // Get reference audio for voice cloning
             var refAudioURL: URL?
-            if let path = selectedVoice.referenceAudioPath {
+            if let path = selectedVoice.resolvedReferenceAudioPath {
                 refAudioURL = URL(fileURLWithPath: path)
             }
 
@@ -976,7 +981,7 @@ final class PlayerViewModel: ObservableObject {
 
             // Get reference audio for voice cloning
             var refAudioURL: URL?
-            if let path = selectedVoice.referenceAudioPath {
+            if let path = selectedVoice.resolvedReferenceAudioPath {
                 refAudioURL = URL(fileURLWithPath: path)
             }
 
@@ -1067,7 +1072,7 @@ final class PlayerViewModel: ObservableObject {
             let outputURL = outputDir.appendingPathComponent("\(item.id.uuidString)_selection.wav")
 
             var refAudioURL: URL?
-            if let path = selectedVoice.referenceAudioPath {
+            if let path = selectedVoice.resolvedReferenceAudioPath {
                 refAudioURL = URL(fileURLWithPath: path)
             }
 
@@ -1175,7 +1180,7 @@ final class PlayerViewModel: ObservableObject {
             let outputURL = outputDir.appendingPathComponent("\(item.id.uuidString).wav")
 
             var refAudioURL: URL?
-            if let path = selectedVoice.referenceAudioPath {
+            if let path = selectedVoice.resolvedReferenceAudioPath {
                 refAudioURL = URL(fileURLWithPath: path)
             }
 

@@ -104,6 +104,59 @@ final class ModelDownloadService: NSObject, ObservableObject {
         return Bundle.main.bundleURL
     }
 
+    /// List of built-in voice file names (without extension)
+    static let builtInVoiceFiles = ["Abigail", "Emily", "Alexander", "Jade", "Henry", "default_voice"]
+
+    /// Copy voice files from bundle to Documents directory
+    func copyVoiceFilesIfNeeded() {
+        let docsDir = modelsDirectory
+        let bundleDir = bundleModelsDirectory
+
+        NSLog("[ModelDownload] Copying voice files from bundle to Documents...")
+
+        for voiceFile in Self.builtInVoiceFiles {
+            let wavFile = "\(voiceFile).wav"
+            let dstPath = docsDir.appendingPathComponent(wavFile).path
+
+            if FileManager.default.fileExists(atPath: dstPath) {
+                NSLog("[ModelDownload] \(wavFile) already exists in Documents")
+                continue
+            }
+
+            let srcPath = bundleDir.appendingPathComponent(wavFile).path
+            if FileManager.default.fileExists(atPath: srcPath) {
+                do {
+                    try FileManager.default.copyItem(atPath: srcPath, toPath: dstPath)
+                    NSLog("[ModelDownload] Successfully copied \(wavFile)")
+                } catch {
+                    NSLog("[ModelDownload] Failed to copy \(wavFile): \(error)")
+                }
+            } else {
+                NSLog("[ModelDownload] \(wavFile) not found in bundle!")
+            }
+        }
+    }
+
+    /// Get voice file URL from Documents directory
+    func voiceFilePath(for voiceId: String) -> URL? {
+        // Map voice ID to voice file name
+        let voiceFileName: String
+        switch voiceId {
+        case "default": voiceFileName = "Abigail"
+        case "warm": voiceFileName = "Emily"
+        case "energetic": voiceFileName = "Alexander"
+        case "calm": voiceFileName = "Jade"
+        case "deep": voiceFileName = "Henry"
+        default: voiceFileName = "Abigail"
+        }
+
+        let path = modelsDirectory.appendingPathComponent("\(voiceFileName).wav")
+        if FileManager.default.fileExists(atPath: path.path) {
+            return path
+        }
+        return nil
+    }
+
     /// Check if models exist, copy from bundle if needed
     func ensureModelsExist() {
         let docsDir = modelsDirectory
@@ -160,6 +213,7 @@ final class ModelDownloadService: NSObject, ObservableObject {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 self.ensureModelsExist()
+                self.copyVoiceFilesIfNeeded()
                 DispatchQueue.main.async {
                     self.checkModelAvailability()
                     continuation.resume()

@@ -12,12 +12,51 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
     var language: String
     var tags: [String]
 
+    /// Resolve the actual reference audio path from Documents directory
+    /// Uses Documents directory path directly (same as ModelDownloadService)
+    var resolvedReferenceAudioPath: String? {
+        if let path = referenceAudioPath, !path.isEmpty {
+            // If already set and file exists, use it
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+
+        // Map voice ID to voice file name
+        let voiceFileName: String
+        switch id {
+        case "default": voiceFileName = "Abigail"
+        case "warm": voiceFileName = "Emily"
+        case "energetic": voiceFileName = "Alexander"
+        case "calm": voiceFileName = "Jade"
+        case "deep": voiceFileName = "Henry"
+        default: voiceFileName = "Abigail"
+        }
+
+        // Construct path to Documents/ChatterboxModels/<voice>.wav
+        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let modelsDir = docsDir.appendingPathComponent("ChatterboxModels")
+        let voicePath = modelsDir.appendingPathComponent("\(voiceFileName).wav")
+
+        if FileManager.default.fileExists(atPath: voicePath.path) {
+            return voicePath.path
+        }
+
+        // Fallback to default voice in Documents
+        let defaultPath = modelsDir.appendingPathComponent("default_voice.wav")
+        if FileManager.default.fileExists(atPath: defaultPath.path) {
+            return defaultPath.path
+        }
+
+        return nil
+    }
+
     static let defaultVoice = VoiceProfile(
         id: "default",
         name: "Nova",
         description: "Clear, professional voice with natural intonation",
         isBuiltIn: true,
-        referenceAudioPath: Bundle.main.path(forResource: "Abigail", ofType: "wav", inDirectory: "ChatterboxModels"),
+        referenceAudioPath: nil,  // Will be resolved at runtime
         sampleRate: 24000,
         language: "en",
         tags: ["neutral", "professional"]
@@ -30,7 +69,7 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
             name: "Aria",
             description: "Warm, conversational tone perfect for stories",
             isBuiltIn: true,
-            referenceAudioPath: Bundle.main.path(forResource: "Emily", ofType: "wav", inDirectory: "ChatterboxModels"),
+            referenceAudioPath: nil,
             sampleRate: 24000,
             language: "en",
             tags: ["warm", "storytelling"]
@@ -40,7 +79,7 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
             name: "Kai",
             description: "Energetic and clear, great for articles and news",
             isBuiltIn: true,
-            referenceAudioPath: Bundle.main.path(forResource: "Alexander", ofType: "wav", inDirectory: "ChatterboxModels"),
+            referenceAudioPath: nil,
             sampleRate: 24000,
             language: "en",
             tags: ["energetic", "news"]
@@ -50,7 +89,7 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
             name: "Luna",
             description: "Calm and soothing, ideal for long reading sessions",
             isBuiltIn: true,
-            referenceAudioPath: Bundle.main.path(forResource: "Jade", ofType: "wav", inDirectory: "ChatterboxModels"),
+            referenceAudioPath: nil,
             sampleRate: 24000,
             language: "en",
             tags: ["calm", "relaxing"]
@@ -60,7 +99,7 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
             name: "Atlas",
             description: "Deep, authoritative voice for non-fiction",
             isBuiltIn: true,
-            referenceAudioPath: Bundle.main.path(forResource: "Henry", ofType: "wav", inDirectory: "ChatterboxModels"),
+            referenceAudioPath: nil,
             sampleRate: 24000,
             language: "en",
             tags: ["deep", "authoritative"]
