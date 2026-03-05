@@ -22,7 +22,8 @@ project.xcworkspace/
 
 # Large files
 *.zip
-*.wav
+# Allow voice samples in ChatterboxModels
+!Reader/Resources/ChatterboxModels/*.wav
 *.mp3
 
 # Python
@@ -32,11 +33,14 @@ __pycache__/
 venv/
 .venv/
 
-# Models (usually in separate repos)
-ChatterboxModels/
+# Models
+# ChatterboxModels/ - Now included in repo
 
 # Claude
 .claude/
 
 # Documentation (if generated)
 Documentation/
+
+# Test results
+test_results.xcresult/
