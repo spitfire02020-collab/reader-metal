@@ -17,7 +17,7 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
         name: "Nova",
         description: "Clear, professional voice with natural intonation",
         isBuiltIn: true,
-        referenceAudioPath: nil,
+        referenceAudioPath: Bundle.main.path(forResource: "Abigail", ofType: "wav", inDirectory: "ChatterboxModels"),
         sampleRate: 24000,
         language: "en",
         tags: ["neutral", "professional"]
@@ -30,7 +30,7 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
             name: "Aria",
             description: "Warm, conversational tone perfect for stories",
             isBuiltIn: true,
-            referenceAudioPath: nil,
+            referenceAudioPath: Bundle.main.path(forResource: "Emily", ofType: "wav", inDirectory: "ChatterboxModels"),
             sampleRate: 24000,
             language: "en",
             tags: ["warm", "storytelling"]
@@ -40,7 +40,7 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
             name: "Kai",
             description: "Energetic and clear, great for articles and news",
             isBuiltIn: true,
-            referenceAudioPath: nil,
+            referenceAudioPath: Bundle.main.path(forResource: "Alexander", ofType: "wav", inDirectory: "ChatterboxModels"),
             sampleRate: 24000,
             language: "en",
             tags: ["energetic", "news"]
@@ -50,7 +50,7 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
             name: "Luna",
             description: "Calm and soothing, ideal for long reading sessions",
             isBuiltIn: true,
-            referenceAudioPath: nil,
+            referenceAudioPath: Bundle.main.path(forResource: "Jade", ofType: "wav", inDirectory: "ChatterboxModels"),
             sampleRate: 24000,
             language: "en",
             tags: ["calm", "relaxing"]
@@ -60,7 +60,7 @@ struct VoiceProfile: Identifiable, Codable, Hashable {
             name: "Atlas",
             description: "Deep, authoritative voice for non-fiction",
             isBuiltIn: true,
-            referenceAudioPath: nil,
+            referenceAudioPath: Bundle.main.path(forResource: "Henry", ofType: "wav", inDirectory: "ChatterboxModels"),
             sampleRate: 24000,
             language: "en",
             tags: ["deep", "authoritative"]
