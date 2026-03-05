@@ -175,6 +175,11 @@ final class ModelDownloadService: NSObject, ObservableObject {
 
     func modelDataPath(for component: ModelComponent, variant: ModelVariant = .q4f16) -> URL {
         let filename = "\(component.rawValue)\(variant.suffix).onnx_data"
+        // Check bundle first - if model weights are bundled, use them directly
+        if let bundlePath = Bundle.main.path(forResource: "\(component.rawValue)\(variant.suffix)", ofType: "onnx_data", inDirectory: "ChatterboxModels") {
+            return URL(fileURLWithPath: bundlePath)
+        }
+        // Fall back to Documents directory (for downloaded models)
         return modelsDirectory.appendingPathComponent(filename)
     }
 
@@ -212,22 +217,33 @@ final class ModelDownloadService: NSObject, ObservableObject {
     func downloadModels(variant: ModelVariant = .q4f16) async {
         guard !isDownloading else { return }
 
+        // Check if models are bundled - if so, skip download
+        checkModelAvailability(variant: variant)
+        if isModelReady {
+            NSLog("[ModelDownload] Models bundled, skipping download")
+            return
+        }
+
         isDownloading = true
         errorMessage = nil
         overallProgress = 0
 
         do {
-            // Download tokenizer and default reference voice
-            try await downloadFile(
-                from: Self.tokenizerURL,
-                to: tokenizerPath,
-                label: "Tokenizer"
-            )
-            try await downloadFile(
-                from: Self.defaultVoiceURL,
-                to: defaultVoicePath,
-                label: "Default Voice"
-            )
+            // Download tokenizer and default reference voice (if not in bundle)
+            if !FileManager.default.fileExists(atPath: tokenizerPath.path) {
+                try await downloadFile(
+                    from: Self.tokenizerURL,
+                    to: tokenizerPath,
+                    label: "Tokenizer"
+                )
+            }
+            if !FileManager.default.fileExists(atPath: defaultVoicePath.path) {
+                try await downloadFile(
+                    from: Self.defaultVoiceURL,
+                    to: defaultVoicePath,
+                    label: "Default Voice"
+                )
+            }
 
             // Download each model component (ONNX graph + weights)
             for (index, component) in ModelComponent.allCases.enumerated() {

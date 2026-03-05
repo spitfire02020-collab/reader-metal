@@ -25,6 +25,8 @@ project.xcworkspace/
 # Allow voice samples in ChatterboxModels
 !Reader/Resources/ChatterboxModels/*.wav
 *.mp3
+# Ignore model weights (too large for GitHub)
+Reader/Resources/ChatterboxModels/*.onnx_data
 
 # Python
 __pycache__/
