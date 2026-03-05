@@ -928,9 +928,10 @@ final class ChatterboxEngine: ObservableObject {
         )
     }
 
+    /// Create a zero-element float32 tensor with one dimension set to 0.
     /// Create a zero-element float16 tensor with one dimension set to 0.
     /// Used to initialise the KV-cache before the first LM inference step.
-    /// q4f16 models expect float16 for KV cache (checked via ORT session).
+    /// q4f16 models expect float16 for KV cache.
     private func createEmptyFloatTensor(shape: [Int]) throws -> ORTValue {
         let nsShape = shape.map { NSNumber(value: $0) }
         let emptyData = NSMutableData()   // 0 bytes – the 0-dim product makes this correct
@@ -968,7 +969,7 @@ final class ChatterboxEngine: ObservableObject {
     }
 
     /// Convert a Float32 array to an ORTValue tensor with float16 element type.
-    /// Required for q4f16 quantized models.
+    /// Required for q4f16 quantized models when using CoreML.
     private func createFloat16Tensor(_ data: [Float], shape: [NSNumber]) throws -> ORTValue {
         // Convert Float32 to Float16
         let float16Data = data.withUnsafeBufferPointer { buffer -> [UInt16] in
@@ -990,7 +991,22 @@ final class ChatterboxEngine: ObservableObject {
         )
     }
 
-    /// Convert Float16 array to Float32
+    /// Convert a Float32 array to an ORTValue tensor.
+    /// Note: q4f16 quantized models still expect float32 inputs - only weights are quantized.
+    private func createFloatTensor(_ data: [Float], shape: [NSNumber]) throws -> ORTValue {
+        // q4f16 models expect float32 input tensors
+        let byteCount = data.count * MemoryLayout<Float>.size
+        let mutableData = data.withUnsafeBytes {
+            NSMutableData(bytes: $0.baseAddress!, length: byteCount)
+        }
+        return try ORTValue(
+            tensorData: mutableData,
+            elementType: .float,
+            shape: shape
+        )
+    }
+
+    /// Extract Float16 array from Float16 tensor
     private func extractFloatArrayFromFloat16(from value: ORTValue) throws -> [Float] {
         let rawData = try value.tensorData() as Data
         let count = rawData.count / MemoryLayout<UInt16>.size
@@ -1042,42 +1058,14 @@ final class ChatterboxEngine: ObservableObject {
         }
     }
 
-    /// Convert a Float32 array to an ORTValue tensor.
-    /// Note: q4f16 quantized models still expect float32 inputs - only weights are quantized.
-    private func createFloatTensor(_ data: [Float], shape: [NSNumber]) throws -> ORTValue {
-        // q4f16 models expect float32 input tensors
-        let byteCount = data.count * MemoryLayout<Float>.size
-        let mutableData = data.withUnsafeBytes {
-            NSMutableData(bytes: $0.baseAddress!, length: byteCount)
-        }
-        return try ORTValue(
-            tensorData: mutableData,
-            elementType: .float,
-            shape: shape
-        )
-    }
-
-    /// Extract a Float32 array from an ORTValue (handles both float32 and float16).
-    /// Handles float16 for q4f16 quantized models.
+    /// Extract a Float32 array from an ORTValue.
+    /// Note: Swift ONNX Runtime only supports Float32
     private func extractFloatArray(from value: ORTValue) throws -> [Float] {
-        let info = try value.tensorTypeAndShapeInfo()
-        let elementType = info.elementType
         let rawData = try value.tensorData() as Data
-
-        if elementType == .float16 {
-            // Handle float16
-            let count = rawData.count / MemoryLayout<UInt16>.size
-            return rawData.withUnsafeBytes { ptr in
-                let buffer = ptr.bindMemory(to: UInt16.self)
-                return buffer.prefix(count).map { float16ToFloat32($0) }
-            }
-        } else {
-            // Handle float32
-            let count = rawData.count / MemoryLayout<Float>.size
-            return rawData.withUnsafeBytes { ptr in
-                let buffer = ptr.bindMemory(to: Float.self)
-                return Array(buffer.prefix(count))
-            }
+        let count = rawData.count / MemoryLayout<Float>.size
+        return rawData.withUnsafeBytes { ptr in
+            let buffer = ptr.bindMemory(to: Float.self)
+            return Array(buffer.prefix(count))
         }
     }
 
