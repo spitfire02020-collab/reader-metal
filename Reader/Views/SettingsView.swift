@@ -64,8 +64,8 @@ struct SettingsView: View {
         } message: {
             Text("This will free up \(downloadService.modelSizeOnDisk()) of storage. You'll need to download the model again to generate audio.")
         }
-        .onAppear {
-            downloadService.checkModelAvailability()
+        .task {
+            await downloadService.checkModelAvailabilityAsync()
         }
     }
 

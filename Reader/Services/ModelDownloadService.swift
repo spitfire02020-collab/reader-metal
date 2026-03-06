@@ -230,18 +230,23 @@ final class ModelDownloadService: NSObject, ObservableObject {
 
         // Run file operations on background to avoid blocking UI
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            Task.detached(priority: .userInitiated) {
-                await MainActor.run {
-                    self.ensureModelsExist()
-                    self.copyVoiceFilesIfNeeded()
-                }
-
-                await MainActor.run {
-                    self.checkModelAvailability()
+            Task.detached(priority: .background) {
+                // Use Task { } to properly move off main actor
+                Task {
+                    await self.performBundleCopy()
                     NSLog("[ModelDownload] copyBundleModelsIfNeeded completed")
                     continuation.resume()
                 }
             }
+        }
+    }
+
+    /// Actual work of copying files - runs off main actor
+    private func performBundleCopy() async {
+        await MainActor.run {
+            self.ensureModelsExist()
+            self.copyVoiceFilesIfNeeded()
+            self.checkModelAvailability()
         }
     }
 
@@ -291,6 +296,60 @@ final class ModelDownloadService: NSObject, ObservableObject {
     }
 
     // MARK: - Status Check
+
+    /// Async version of checkModelAvailability that runs file checks on background thread
+    func checkModelAvailabilityAsync(variant: ModelVariant = .q4f16) async {
+        // Run expensive file operations on background thread
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Task.detached(priority: .background) {
+                Task { @MainActor in
+                    self.performModelAvailabilityCheck(variant: variant)
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    /// Actual model availability check implementation
+    private func performModelAvailabilityCheck(variant: ModelVariant = .q4f16) {
+        NSLog("[ModelDownload] checkModelAvailabilityAsync: starting background check")
+
+        // Check each model component
+        var missingFiles: [String] = []
+        for component in ModelComponent.allCases {
+            let modelPathURL = self.modelPath(for: component, variant: variant)
+            let dataPathURL = self.modelDataPath(for: component, variant: variant)
+
+            let modelExists = FileManager.default.fileExists(atPath: modelPathURL.path)
+            let dataExists = FileManager.default.fileExists(atPath: dataPathURL.path)
+
+            NSLog("[ModelDownload] checkModelAvailabilityAsync: \(component.rawValue) model exists=\(modelExists), data exists=\(dataExists)")
+
+            if !modelExists {
+                missingFiles.append(modelPathURL.lastPathComponent)
+            }
+            if !dataExists {
+                missingFiles.append(dataPathURL.lastPathComponent)
+            }
+        }
+
+        let tokenizerExists = FileManager.default.fileExists(atPath: self.tokenizerPath.path)
+        NSLog("[ModelDownload] checkModelAvailabilityAsync: tokenizer exists=\(tokenizerExists)")
+
+        // Check bundle for ONNX files (lightweight - just log presence)
+        let bundleFiles = (try? FileManager.default.contentsOfDirectory(atPath: self.bundleModelsDirectory.path)) ?? []
+        let onnxFiles = bundleFiles.filter { $0.hasSuffix(".onnx") }
+        NSLog("[ModelDownload] checkModelAvailabilityAsync: bundle has \(onnxFiles.count) ONNX files")
+
+        // Determine if models are ready (can use bundle files)
+        let allPresent = ModelComponent.allCases.allSatisfy { component in
+            FileManager.default.fileExists(atPath: self.modelPath(for: component, variant: variant).path) &&
+            FileManager.default.fileExists(atPath: self.modelDataPath(for: component, variant: variant).path)
+        }
+
+        self.isModelReady = allPresent || !onnxFiles.isEmpty  // Ready if we have bundle models
+        NSLog("[ModelDownload] checkModelAvailabilityAsync: isModelReady=\(self.isModelReady)")
+    }
 
     func checkModelAvailability(variant: ModelVariant = .q4f16) {
         // Check each model component

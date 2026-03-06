@@ -95,14 +95,10 @@ final class ChatterboxEngine: ObservableObject {
             throw ChatterboxError.modelsNotDownloaded
         }
 
-        // Use original ONNX models with dynamic shapes.
-        // Dynamic shapes work on device with sufficient memory.
-        // CoreML doesn't work well with dynamic shapes, so use CPU on simulator.
-        #if targetEnvironment(simulator)
-        let useCoreML = false       // CoreML not available on simulator
-        #else
-        let useCoreML = true        // Use CoreML on device for GPU acceleration
-        #endif
+        // Always use CPU for inference.
+        // CoreML has issues with dynamic shapes and the q4f16 quantized models.
+        // CPU inference is reliable and sufficient for real-time TTS.
+        let useCoreML = false
 
         NSLog("[Chatterbox] loadModels: loading tokenizer")
         try tokenizer.load(from: downloadService.tokenizerPath)
@@ -1001,7 +997,7 @@ final class ChatterboxEngine: ObservableObject {
     }
 
     /// Convert a Float32 array to an ORTValue tensor with float16 element type.
-    /// Required for q4f16 quantized models when using CoreML.
+    /// Required for q4f16 quantized models.
     private func createFloat16Tensor(_ data: [Float], shape: [NSNumber]) throws -> ORTValue {
         // Convert Float32 to Float16
         let float16Data = data.withUnsafeBufferPointer { buffer -> [UInt16] in

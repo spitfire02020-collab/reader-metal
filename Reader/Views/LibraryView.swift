@@ -123,7 +123,9 @@ struct LibraryView: View {
             }
             .onAppear {
                 viewModel.loadLibrary()
-                downloadService.checkModelAvailability()
+            }
+            .task {
+                await downloadService.checkModelAvailabilityAsync()
             }
         }
         .preferredColorScheme(.dark)
