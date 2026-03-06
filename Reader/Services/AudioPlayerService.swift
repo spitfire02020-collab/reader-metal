@@ -63,9 +63,19 @@ final class AudioPlayerService: NSObject, ObservableObject {
         itemProgress.removeValue(forKey: itemID)
     }
 
-    /// Clear all loaded audio files (to avoid duplicates when reloading chunks)
+    /// Clear all loaded audio files and reset state for fresh playback
+    /// Called when restarting synthesis with new voice/preset
     func clearAudioFiles() {
         audioFiles.removeAll()
+        // Reset all playback state to avoid stale state causing issues
+        duration = 0
+        currentTime = 0
+        progress = 0
+        currentChunkIndex = 0
+        isExpectingMoreChunks = false
+        // Stop any currently playing audio
+        audioPlayer?.stop()
+        audioPlayer = nil
     }
 
     /// Clear playback state for an item - called when loading existing chunks
@@ -279,7 +289,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
 
     /// Perform crossfade between current and next chunk
     private func performCrossfade(to nextBuffer: AVAudioPCMBuffer, completion: @escaping () -> Void) {
-        guard let engine = audioEngine,
+        guard audioEngine != nil,
               let nodeA = playerNodeA,
               let nodeB = playerNodeB else {
             completion()
@@ -297,7 +307,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
         }
 
         // Schedule the next buffer
-        incomingNode.scheduleBuffer(nextBuffer, at: nil, options: []) { [weak self] in
+        incomingNode.scheduleBuffer(nextBuffer, at: nil, options: []) {
             // Buffer finished
         }
 
@@ -311,7 +321,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
             let fadeOutVolume = cos(progress * .pi / 2)
             let fadeInVolume = sin(progress * .pi / 2)
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + fadeInterval * Double(i)) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + fadeInterval * Double(i)) {
                 activeNode.volume = fadeOutVolume
                 incomingNode.volume = fadeInVolume
             }
@@ -326,7 +336,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
         isUsingNodeA.toggle()
 
         // Stop and reset active node after crossfade
-        DispatchQueue.main.asyncAfter(deadline: .now() + crossfadeDuration) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + crossfadeDuration) {
             activeNode.stop()
             completion()
         }
@@ -517,8 +527,10 @@ final class AudioPlayerService: NSObject, ObservableObject {
     // MARK: - Playback Controls
 
     func play() {
+        NSLog("[AudioPlayer] play() called, audioPlayer is nil: \(audioPlayer == nil)")
         audioPlayer?.rate = playbackRate
-        audioPlayer?.play()
+        let playResult = audioPlayer?.play()
+        NSLog("[AudioPlayer] play() result: \(String(describing: playResult)), isPlaying: \(audioPlayer?.isPlaying ?? false)")
         isPlaying = true
         startProgressUpdates()
         updateNowPlayingInfo()
@@ -538,9 +550,11 @@ final class AudioPlayerService: NSObject, ObservableObject {
     func stop() {
         audioPlayer?.stop()
         audioPlayer?.currentTime = 0
-        isPlaying = false
-        currentTime = 0
-        progress = 0
+        DispatchQueue.main.async { [weak self] in
+            self?.isPlaying = false
+            self?.currentTime = 0
+            self?.progress = 0
+        }
         stopProgressUpdates()
     }
 

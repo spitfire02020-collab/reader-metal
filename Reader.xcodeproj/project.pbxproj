@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -12,6 +12,7 @@
 		12010487F4C41EFEDFC6393B /* TextChunker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E05F4D2ADA3A48AC802CB336 /* TextChunker.swift */; };
 		19DA2FC9683E7A181295B62D /* TokenizerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582CB386C3F0D50F8551BB9C /* TokenizerService.swift */; };
 		1D0F06BE77D1840E56CB6D13 /* PlayerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0786B23EDD51A5DD0FAD51 /* PlayerViewModel.swift */; };
+		1D76557241415BC64203DCE6 /* SynthesisDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E608B09F90284E5EC2521A7 /* SynthesisDatabase.swift */; };
 		33E97E783B62BB2B08F3CEB8 /* Alexander.wav in Resources */ = {isa = PBXBuildFile; fileRef = D0C2AB7BF361C2C975E56C61 /* Alexander.wav */; };
 		346E0B49B8EAA8A6827408A8 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CEB65F009CA61E73F05C5D1 /* WaveformView.swift */; };
 		34D9BCE427D46F48FC4D80CE /* Abigail.wav in Resources */ = {isa = PBXBuildFile; fileRef = E9AC01EA7B1198702B683F86 /* Abigail.wav */; };
@@ -20,14 +21,15 @@
 		3FED791D157451F199D41A31 /* AddContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8712B5068E891079DC2E31D /* AddContentView.swift */; };
 		44907469286C169F479963EA /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBF4D0CF7F0F5AD94B1918E /* LibraryViewModel.swift */; };
 		46D9E02F513A87419DB3BCAF /* Color+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAEE67288ED13F903EEAC7B8 /* Color+Extensions.swift */; };
-		4AB24BD22B4328865FCE3D8C /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = 5AD855B3EF4137581DCD1FA5 /* onnxruntime */; };
+		4AB24BD22B4328865FCE3D8C /* SQLite in Frameworks */ = {isa = PBXBuildFile; productRef = FF3B23747E5E0A6C4E73EA85 /* SQLite */; };
 		561C3F3E331D5D84D4419177 /* ChatterboxEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96367034206E129C51F09C14 /* ChatterboxEngine.swift */; };
 		61D818391EF3E55B91D91D45 /* VoiceProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7EA5018E4A65164B397831 /* VoiceProfile.swift */; };
 		632D901FDBB5AD95C051ED2E /* language_model_q4f16.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 1FB2454E6E0AAD2BB632513A /* language_model_q4f16.onnx */; };
 		67565BA7952AF89BD47A6775 /* ONNXGraphFixer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F6C5F6D8D708F8417D1B670 /* ONNXGraphFixer.swift */; };
+		6CD90541E38A9BD37F24D9B7 /* onnxruntime_extensions in Frameworks */ = {isa = PBXBuildFile; productRef = B3E7390BF42047107A2CA83A /* onnxruntime_extensions */; };
 		745A589F7CD02CFD3A76D775 /* Emily.wav in Resources */ = {isa = PBXBuildFile; fileRef = D98663CD0EA309BD4EAC21F8 /* Emily.wav */; };
 		784AEA2770B20A30383B9F6A /* speech_encoder_q4f16.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 84ABC2FE9AB75FA7BD1DD62B /* speech_encoder_q4f16.onnx */; };
-		89D0BFB1E83C1DBA03E0FA55 /* onnxruntime_extensions in Frameworks */ = {isa = PBXBuildFile; productRef = B3E7390BF42047107A2CA83A /* onnxruntime_extensions */; };
+		89D0BFB1E83C1DBA03E0FA55 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = 5AD855B3EF4137581DCD1FA5 /* onnxruntime */; };
 		8AC1726ED465942DCE31C1C0 /* Henry.wav in Resources */ = {isa = PBXBuildFile; fileRef = E88E74B1B6D5C1C93302E26A /* Henry.wav */; };
 		939A3D49B6AA379EEA8435C5 /* WebContentExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D7ABAE630EFCCC5AA154642 /* WebContentExtractor.swift */; };
 		9682A9E91A32F4883734C24A /* embed_tokens_q4f16.onnx_data in Resources */ = {isa = PBXBuildFile; fileRef = 3D621A5091C51F41DBD73CA2 /* embed_tokens_q4f16.onnx_data */; };
@@ -64,25 +66,26 @@
 /* Begin PBXFileReference section */
 		0F12580582B61E83294531E6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		136D276230EFC0D9628C5551 /* VoiceProfileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProfileTests.swift; sourceTree = "<group>"; };
-		1FB2454E6E0AAD2BB632513A /* language_model_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = language_model_q4f16.onnx; sourceTree = "<group>"; };
+		1FB2454E6E0AAD2BB632513A /* language_model_q4f16.onnx */ = {isa = PBXFileReference; path = language_model_q4f16.onnx; sourceTree = "<group>"; };
 		2C81E6F42471465EBDD60823 /* VoiceSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSelectionView.swift; sourceTree = "<group>"; };
 		2F0786B23EDD51A5DD0FAD51 /* PlayerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViewModel.swift; sourceTree = "<group>"; };
-		3D621A5091C51F41DBD73CA2 /* embed_tokens_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = text; path = embed_tokens_q4f16.onnx_data; sourceTree = "<group>"; };
+		3D621A5091C51F41DBD73CA2 /* embed_tokens_q4f16.onnx_data */ = {isa = PBXFileReference; path = embed_tokens_q4f16.onnx_data; sourceTree = "<group>"; };
 		3D7ABAE630EFCCC5AA154642 /* WebContentExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentExtractor.swift; sourceTree = "<group>"; };
 		4A6D8EC036C82852FD4ED0CF /* default_voice.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = default_voice.wav; sourceTree = "<group>"; };
+		4E608B09F90284E5EC2521A7 /* SynthesisDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisDatabase.swift; sourceTree = "<group>"; };
 		582CB386C3F0D50F8551BB9C /* TokenizerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenizerService.swift; sourceTree = "<group>"; };
 		58B56ED5C10DC8E411631EEA /* Jade.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Jade.wav; sourceTree = "<group>"; };
-		66E8C0418C8986DC7F8B6C1E /* embed_tokens_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = embed_tokens_q4f16.onnx; sourceTree = "<group>"; };
+		66E8C0418C8986DC7F8B6C1E /* embed_tokens_q4f16.onnx */ = {isa = PBXFileReference; path = embed_tokens_q4f16.onnx; sourceTree = "<group>"; };
 		68FE5DFA26167FF456F60EA0 /* ReaderTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ReaderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6C7A08DDC8989AC474CA78BF /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		732C67BABB16D2F1FCD95689 /* conditional_decoder_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx_data; sourceTree = "<group>"; };
-		7D1BE4C99722DBE37CC537AA /* Reader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		732C67BABB16D2F1FCD95689 /* conditional_decoder_q4f16.onnx_data */ = {isa = PBXFileReference; path = conditional_decoder_q4f16.onnx_data; sourceTree = "<group>"; };
+		7D1BE4C99722DBE37CC537AA /* Reader.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7F6C5F6D8D708F8417D1B670 /* ONNXGraphFixer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ONNXGraphFixer.swift; sourceTree = "<group>"; };
-		84ABC2FE9AB75FA7BD1DD62B /* speech_encoder_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = speech_encoder_q4f16.onnx; sourceTree = "<group>"; };
+		84ABC2FE9AB75FA7BD1DD62B /* speech_encoder_q4f16.onnx */ = {isa = PBXFileReference; path = speech_encoder_q4f16.onnx; sourceTree = "<group>"; };
 		8B58C303DAE833FB27055370 /* ReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderApp.swift; sourceTree = "<group>"; };
 		8B9DEE2C033CD96D4CCEE412 /* LibraryItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryItem.swift; sourceTree = "<group>"; };
 		8CBF4D0CF7F0F5AD94B1918E /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
-		91D3149D8055DAFC5087012E /* language_model_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = text; path = language_model_q4f16.onnx_data; sourceTree = "<group>"; };
+		91D3149D8055DAFC5087012E /* language_model_q4f16.onnx_data */ = {isa = PBXFileReference; path = language_model_q4f16.onnx_data; sourceTree = "<group>"; };
 		92A3FC5F094E7E271ED14097 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		952EEB2BEF90ABE507E02BF3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		96367034206E129C51F09C14 /* ChatterboxEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatterboxEngine.swift; sourceTree = "<group>"; };
@@ -96,9 +99,9 @@
 		BC6E6E74FA806E8B4D80B03D /* ModelDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadService.swift; sourceTree = "<group>"; };
 		BFCD7FE661A4214FA2CFB3FE /* BookParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookParser.swift; sourceTree = "<group>"; };
 		CDCB6111E879C860BEF6509A /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
-		CE41A9B3A8A24DBAD1D24694 /* speech_encoder_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = speech_encoder_q4f16.onnx_data; sourceTree = "<group>"; };
+		CE41A9B3A8A24DBAD1D24694 /* speech_encoder_q4f16.onnx_data */ = {isa = PBXFileReference; path = speech_encoder_q4f16.onnx_data; sourceTree = "<group>"; };
 		D0C2AB7BF361C2C975E56C61 /* Alexander.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Alexander.wav; sourceTree = "<group>"; };
-		D657E607FBE4A1CE3B0C1E71 /* conditional_decoder_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx; sourceTree = "<group>"; };
+		D657E607FBE4A1CE3B0C1E71 /* conditional_decoder_q4f16.onnx */ = {isa = PBXFileReference; path = conditional_decoder_q4f16.onnx; sourceTree = "<group>"; };
 		D98663CD0EA309BD4EAC21F8 /* Emily.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Emily.wav; sourceTree = "<group>"; };
 		DC9F02CB5D2F8E7A8CA1C44C /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
 		E05F4D2ADA3A48AC802CB336 /* TextChunker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextChunker.swift; sourceTree = "<group>"; };
@@ -114,8 +117,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4AB24BD22B4328865FCE3D8C /* onnxruntime in Frameworks */,
-				89D0BFB1E83C1DBA03E0FA55 /* onnxruntime_extensions in Frameworks */,
+				4AB24BD22B4328865FCE3D8C /* SQLite in Frameworks */,
+				89D0BFB1E83C1DBA03E0FA55 /* onnxruntime in Frameworks */,
+				6CD90541E38A9BD37F24D9B7 /* onnxruntime_extensions in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -188,6 +192,7 @@
 				96367034206E129C51F09C14 /* ChatterboxEngine.swift */,
 				BC6E6E74FA806E8B4D80B03D /* ModelDownloadService.swift */,
 				7F6C5F6D8D708F8417D1B670 /* ONNXGraphFixer.swift */,
+				4E608B09F90284E5EC2521A7 /* SynthesisDatabase.swift */,
 				E05F4D2ADA3A48AC802CB336 /* TextChunker.swift */,
 				582CB386C3F0D50F8551BB9C /* TokenizerService.swift */,
 				3D7ABAE630EFCCC5AA154642 /* WebContentExtractor.swift */,
@@ -304,6 +309,7 @@
 			);
 			name = Reader;
 			packageProductDependencies = (
+				FF3B23747E5E0A6C4E73EA85 /* SQLite */,
 				5AD855B3EF4137581DCD1FA5 /* onnxruntime */,
 				B3E7390BF42047107A2CA83A /* onnxruntime_extensions */,
 			);
@@ -325,6 +331,7 @@
 						ProvisioningStyle = Automatic;
 					};
 					4FF2F419C3D2B210459D9DF7 = {
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -340,8 +347,10 @@
 			mainGroup = 73CE473A89CFE902C734CE7E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite.swift" */,
 				ECA17F6202608D9C8C4C7A85 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 			);
+			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -399,6 +408,7 @@
 				C6E7B09AAC3E5C49BE5B0102 /* ReaderApp.swift in Sources */,
 				39A2DE6A4608DCE8FF822EDA /* SelectableTextView.swift in Sources */,
 				E1B64984EF342473BAEA9C17 /* SettingsView.swift in Sources */,
+				1D76557241415BC64203DCE6 /* SynthesisDatabase.swift in Sources */,
 				12010487F4C41EFEDFC6393B /* TextChunker.swift in Sources */,
 				19DA2FC9683E7A181295B62D /* TokenizerService.swift in Sources */,
 				61D818391EF3E55B91D91D45 /* VoiceProfile.swift in Sources */,
@@ -440,7 +450,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.ReaderTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.ReaderTests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Reader.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Reader";
@@ -460,7 +470,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.ReaderTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.ReaderTests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Reader.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Reader";
@@ -594,14 +604,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = QRK36XKAV8;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Reader/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.Reader;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.Reader;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -613,14 +623,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = QRK36XKAV8;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Reader/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.Reader;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.Reader;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -659,6 +669,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stephencelis/SQLite.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.15.0;
+			};
+		};
 		ECA17F6202608D9C8C4C7A85 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/spitfire02020-collab/onnxruntime-swift-package-manager";
@@ -679,6 +697,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = ECA17F6202608D9C8C4C7A85 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
 			productName = onnxruntime_extensions;
+		};
+		FF3B23747E5E0A6C4E73EA85 /* SQLite */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite.swift" */;
+			productName = SQLite;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

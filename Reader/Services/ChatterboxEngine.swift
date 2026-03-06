@@ -276,13 +276,17 @@ final class ChatterboxEngine: ObservableObject {
 
         // Step 3: Process chunks in PARALLEL with LIMITED CONCURRENCY
         // Running 173 tasks in parallel causes OOM - use batch size of 4
-        // Each chunk completion triggers the callback for true streaming playback
+        // Callbacks fire in SEQUENTIAL ORDER for proper audio playback
         let speakerCtx = speakerContext
         let chunkCount = chunks.count
         let configCopy = generationConfig
         let maxConcurrent = 4  // Limit to prevent OOM
 
         var audioResults: [(Int, [Float])] = []
+
+        // Track completed chunks and next expected index for sequential callback ordering
+        var completedChunks: [Int: (audio: [Float], url: URL)] = [:]
+        var nextExpectedIndex = 0
 
         // Prepare non-empty chunks with their indices
         var chunkTasks: [(index: Int, text: String)] = []
@@ -305,7 +309,7 @@ final class ChatterboxEngine: ObservableObject {
             NSLog("[Chatterbox] Processing batch \(batchIdx + 1)/\(totalBatches) with \(batch.count) tasks")
 
             // Process this batch in parallel
-            let batchResults: [(Int, [Float])] = await withTaskGroup(of: (Int, [Float]?).self) { group in
+            await withTaskGroup(of: (Int, [Float]?).self) { group in
                 for (index, chunkText) in batch {
                     group.addTask { [self] in
                         NSLog("[Chatterbox] synthesizing chunk \(index+1)/\(chunkCount) (\(chunkText.count) chars)")
@@ -320,40 +324,38 @@ final class ChatterboxEngine: ObservableObject {
                     }
                 }
 
-                var results: [(Int, [Float])] = []
                 // Process results as they complete (not after all complete)
                 for await (index, audio) in group {
                     if let audio = audio {
-                        results.append((index, audio))
-
-                        // Write chunk file immediately when this chunk completes
+                        // Write chunk file when this chunk completes
                         let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
                         do {
                             try writeWAV(samples: audio, to: chunkURL, sampleRate: config.sampleRate)
                             NSLog("[Chatterbox] Chunk \(index) file written: \(chunkURL.lastPathComponent)")
 
-                            // Call callback IMMEDIATELY when this chunk completes
-                            if let onChunkReady = onChunkReady {
-                                NSLog("[Chatterbox] Calling onChunkReady for chunk \(index+1)/\(chunkCount)")
-                                await MainActor.run {
-                                    onChunkReady(chunkURL)
-                                }
-                            } else {
-                                NSLog("[Chatterbox] WARNING: onChunkReady callback is NIL!")
-                            }
+                            // Store in completedChunks for ordered callback
+                            completedChunks[index] = (audio, chunkURL)
                         } catch {
                             NSLog("[Chatterbox] Failed to write chunk \(index): \(error)")
                         }
                     }
                 }
-                return results
             }
 
-            // Add batch results to overall results
-            audioResults.append(contentsOf: batchResults)
+            // NOW fire callbacks in SEQUENTIAL ORDER
+            // This ensures audio plays in correct order even if chunks complete out of order
+            while let nextChunk = completedChunks.removeValue(forKey: nextExpectedIndex) {
+                if let onChunkReady = onChunkReady {
+                    NSLog("[Chatterbox] Calling onChunkReady for chunk \(nextExpectedIndex+1)/\(chunkCount) (sequential)")
+                    await MainActor.run {
+                        onChunkReady(nextChunk.url)
+                    }
+                }
+                nextExpectedIndex += 1
+            }
 
             // Update progress after batch completes
-            let completedCount = audioResults.count
+            let completedCount = completedChunks.count + nextExpectedIndex
             let progress = Double(completedCount) / Double(chunkCount)
             if let onProgress = onProgress {
                 await MainActor.run {
@@ -363,7 +365,7 @@ final class ChatterboxEngine: ObservableObject {
         }
 
         // All chunks have been processed
-        NSLog("[Chatterbox] All \(chunks.count) chunks complete - callback fired during synthesis")
+        NSLog("[Chatterbox] All \(chunks.count) chunks complete - callback fired sequentially")
 
         if let onProgress = onProgress {
             await MainActor.run {

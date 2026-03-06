@@ -319,3 +319,172 @@ extension View {
         self.modifier(AnimatedNoiseModifier(opacity: opacity))
     }
 }
+
+// MARK: - Enhanced Button Styles
+
+/// Premium button with scale, glow, and haptic feedback
+struct PremiumButtonStyle: ButtonStyle {
+    let accentColor: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .shadow(
+                color: configuration.isPressed
+                    ? accentColor.opacity(0.2)
+                    : accentColor.opacity(0.4),
+                radius: configuration.isPressed ? 4 : 12,
+                y: configuration.isPressed ? 2 : 6
+            )
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == PremiumButtonStyle {
+    static func premium(_ color: Color = .appAccent) -> PremiumButtonStyle {
+        PremiumButtonStyle(accentColor: color)
+    }
+}
+
+/// Glow button that pulses subtly
+struct GlowButtonStyle: ButtonStyle {
+    let color: Color
+    @State private var isGlowing = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .shadow(
+                color: color.opacity(configuration.isPressed ? 0.3 : (isGlowing ? 0.6 : 0.4)),
+                radius: configuration.isPressed ? 4 : (isGlowing ? 16 : 10),
+                y: configuration.isPressed ? 2 : 4
+            )
+            .onAppear {
+                withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
+                    isGlowing = true
+                }
+            }
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == GlowButtonStyle {
+    static func glow(_ color: Color = .appAccent) -> GlowButtonStyle {
+        GlowButtonStyle(color: color)
+    }
+}
+
+// MARK: - Shimmer Effect
+
+struct ShimmerModifier: ViewModifier {
+    @State private var phase: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geometry in
+                    LinearGradient(
+                        colors: [
+                            .clear,
+                            .white.opacity(0.3),
+                            .clear
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geometry.size.width * 2)
+                    .offset(x: -geometry.size.width + (geometry.size.width * 2 * phase))
+                }
+            )
+            .mask(content)
+            .onAppear {
+                withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                    phase = 1
+                }
+            }
+    }
+}
+
+extension View {
+    func shimmer() -> some View {
+        modifier(ShimmerModifier())
+    }
+}
+
+// MARK: - Pulse Animation
+
+struct PulseModifier: ViewModifier {
+    let color: Color
+    @State private var isPulsing = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                Circle()
+                    .stroke(color.opacity(isPulsing ? 0 : 0.4), lineWidth: 2)
+                    .scaleEffect(isPulsing ? 1.5 : 1.0)
+                    .opacity(isPulsing ? 0 : 1)
+            )
+            .onAppear {
+                withAnimation(.easeOut(duration: 1.5).repeatForever(autoreverses: false)) {
+                    isPulsing = true
+                }
+            }
+    }
+}
+
+extension View {
+    func pulse(_ color: Color = .appAccent) -> some View {
+        modifier(PulseModifier(color: color))
+    }
+}
+
+// MARK: - Stagger Animation
+
+struct StaggerModifier: ViewModifier {
+    let delay: Double
+    @State private var isVisible = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isVisible ? 1 : 0)
+            .offset(y: isVisible ? 0 : 20)
+            .onAppear {
+                withAnimation(.spring(response: 0.6, dampingFraction: 0.8).delay(delay)) {
+                    isVisible = true
+                }
+            }
+    }
+}
+
+extension View {
+    func stagger(_ delay: Double) -> some View {
+        modifier(StaggerModifier(delay: delay))
+    }
+}
+
+// MARK: - Ambient Glow Background
+
+struct AmbientGlowModifier: ViewModifier {
+    let color: Color
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                ZStack {
+                    // Outer glow
+                    color.opacity(0.15)
+                        .blur(radius: 40)
+                    // Inner glow
+                    color.opacity(0.3)
+                        .blur(radius: 20)
+                }
+            )
+    }
+}
+
+extension View {
+    func ambientGlow(_ color: Color = .appAccent) -> some View {
+        modifier(AmbientGlowModifier(color: color))
+    }
+}

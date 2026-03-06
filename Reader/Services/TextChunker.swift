@@ -28,7 +28,7 @@ final class TextChunker {
 
     /// Split text into chunks - one sentence per chunk
     static func chunkText(_ text: String) -> [String] {
-        var cleaned = cleanText(text)
+        let cleaned = cleanText(text)
         guard !cleaned.isEmpty else { return [] }
 
         // Preserve non-verbal cues with placeholders

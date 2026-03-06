@@ -44,6 +44,7 @@ final class PlayerViewModel: ObservableObject {
     let audioPlayer: AudioPlayerService
     private let engine = ChatterboxEngine()
     private let downloadService = ModelDownloadService.shared
+    private let synthesisDB = SynthesisDatabase.shared
 
     /// Total duration - always use estimated full duration, not cumulative chunk duration
     var totalDuration: TimeInterval {
@@ -627,7 +628,24 @@ final class PlayerViewModel: ObservableObject {
 
     /// Toggle pause/resume of audio generation
     func toggleGenerationPause() {
+        if isPaused {
+            // Resume - update DB status
+            try? synthesisDB.updateItemStatus(id: item.id.uuidString, status: SynthesisItemStatus.synthesizing)
+        } else {
+            // Pause - update DB status
+            try? synthesisDB.updateItemStatus(id: item.id.uuidString, status: SynthesisItemStatus.paused)
+        }
         isPaused.toggle()
+    }
+
+    /// Cancel audio generation
+    func cancelGeneration() {
+        synthesisTask?.cancel()
+        try? synthesisDB.updateItemStatus(id: item.id.uuidString, status: SynthesisItemStatus.cancelled)
+        isSynthesizing = false
+        isStreamingAudio = false
+        isPaused = false
+        NSLog("[PlayerVM] Generation cancelled")
     }
 
     // MARK: - Synthesis
@@ -674,6 +692,47 @@ final class PlayerViewModel: ObservableObject {
         isSynthesizing = true
         synthesisProgress = 0
         errorMessage = nil
+
+        // Check for existing synthesis in database (resume support)
+        let itemId = item.id.uuidString
+        var isResuming = false
+        if let existingItem = try? synthesisDB.getItem(id: itemId) {
+            if existingItem.status == .paused || existingItem.status == .error || existingItem.status == .cancelled {
+                NSLog("[PlayerVM] Resuming synthesis for \(itemId), progress: \(existingItem.completedChunks)/\(existingItem.totalChunks)")
+                isResuming = true
+                // Load completed chunks into memory
+                if let completedChunks = try? synthesisDB.getCompletedChunks(itemId: itemId) {
+                    for chunk in completedChunks {
+                        if let path = chunk.filePath {
+                            item.generatedChunks[chunk.chunkIndex] = path
+                        }
+                    }
+                }
+            } else if existingItem.status == .synthesizing {
+                // Already synthesizing - might be interrupted, treat as resume
+                NSLog("[PlayerVM] Found synthesizing item, resuming...")
+                isResuming = true
+            }
+        }
+
+        // Create new synthesis in database if not resuming
+        if !isResuming {
+            do {
+                try synthesisDB.createItem(
+                    id: itemId,
+                    title: item.title,
+                    text: item.textContent,
+                    voiceId: selectedVoice.id,
+                    settings: synthesisSettings
+                )
+                NSLog("[PlayerVM] Created new synthesis in database")
+            } catch {
+                NSLog("[PlayerVM] Failed to create synthesis in DB: \(error)")
+            }
+        }
+
+        // Mark as synthesizing in database
+        try? synthesisDB.updateItemStatus(id: itemId, status: SynthesisItemStatus.synthesizing)
 
         do {
             if !engine.isLoaded {
@@ -729,6 +788,21 @@ final class PlayerViewModel: ObservableObject {
                         guard let self = self else { return }
                         NSLog("[PlayerVM] onChunkReady callback received: \(chunkURL.lastPathComponent)")
 
+                        // Extract chunk index from filename (format: uuid_part0.wav)
+                        let filename = chunkURL.deletingPathExtension().lastPathComponent
+                        if let partRange = filename.range(of: "_part") {
+                            let indexStr = String(filename[partRange.upperBound...])
+                            if let chunkIndex = Int(indexStr) {
+                                // Track in database
+                                try? self.synthesisDB.updateItemProgress(id: itemId)
+                                if let progress = try? self.synthesisDB.getProgress(itemId: itemId) {
+                                    Task { @MainActor in
+                                        self.synthesisProgress = progress
+                                    }
+                                }
+                            }
+                        }
+
                         // All UI updates must be dispatched to main actor
                         Task { @MainActor in
                             if tracker.firstURL == nil {
@@ -762,6 +836,10 @@ final class PlayerViewModel: ObservableObject {
 
             // Synthesis complete
             NSLog("[PlayerVM] callback synthesis complete")
+
+            // Mark synthesis as completed in database
+            try? synthesisDB.updateItemStatus(id: itemId, status: SynthesisItemStatus.completed)
+
             audioPlayer.isExpectingMoreChunks = false
             item.audioFileURL = outputURL.path
             item.status = .ready
