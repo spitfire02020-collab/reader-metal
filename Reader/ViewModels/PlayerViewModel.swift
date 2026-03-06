@@ -250,23 +250,46 @@ final class PlayerViewModel: ObservableObject {
 
     /// Restart synthesis with current voice (used when voice/settings change during playback)
     private func restartWithNewVoice() {
-        // Stop current playback and synthesis
+        // Get current position before stopping
+        let currentChunkIndex = audioPlayer.currentChunkIndex
+        NSLog("[PlayerVM] Voice changed at chunk \(currentChunkIndex), restarting from there")
+
+        // Stop current playback but don't clear audio files yet
         audioPlayer.stop()
-        audioPlayer.clearAudioFiles()  // Clear audio files so it re-synthesizes
         synthesisTask?.cancel()
         isSynthesizing = false
         isStreamingAudio = false
 
-        // Reset highlighting indices to sync with new playback from beginning
+        // Reset highlighting
         currentPlayingIndex = -1
-        audioPlayer.currentChunkIndex = 0
 
-        // Clear generated chunks to force re-synthesis with new voice
-        item.generatedChunks.removeAll()
+        // Clear audio files from current position onwards (to force re-synthesis)
+        let outputDir = chunkDirectory
+        if let files = try? FileManager.default.contentsOfDirectory(at: outputDir, includingPropertiesForKeys: nil) {
+            for file in files {
+                // Extract chunk index from filename like "uuid_part0.wav"
+                let filename = file.deletingPathExtension().lastPathComponent
+                if let partRange = filename.range(of: "_part") {
+                    let indexStr = String(filename[partRange.upperBound...])
+                    if let index = Int(indexStr), index >= currentChunkIndex {
+                        try? FileManager.default.removeItem(at: file)
+                        NSLog("[PlayerVM] Deleted chunk file: \(file.lastPathComponent)")
+                    }
+                }
+            }
+        }
 
-        // Start new synthesis from beginning
+        // Clear in-memory chunks from current position onwards
+        let chunksToRemove = item.generatedChunks.keys.filter { $0 >= currentChunkIndex }
+        for key in chunksToRemove {
+            item.generatedChunks.removeValue(forKey: key)
+        }
+        NSLog("[PlayerVM] Cleared \(chunksToRemove.count) chunks from index \(currentChunkIndex) onwards")
+
+        // Start new synthesis from current position
+        audioPlayer.currentChunkIndex = currentChunkIndex
         synthesisTask = Task {
-            await self.startSynthesisInternal()
+            await self.startSynthesisInternal(startingFromChunk: currentChunkIndex)
         }
     }
 
@@ -506,7 +529,8 @@ final class PlayerViewModel: ObservableObject {
     }
 
     /// Internal synthesis that can be cancelled
-    private func startSynthesisInternal() async {
+    private func startSynthesisInternal(startingFromChunk: Int = 0) async {
+        // Use regular startSynthesis which handles existing chunks properly
         await startSynthesis()
     }
 
