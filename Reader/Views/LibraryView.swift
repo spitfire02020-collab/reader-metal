@@ -35,13 +35,18 @@ struct LibraryView: View {
                         filterTabs
 
                         // Content list
-                        if viewModel.filteredItems.isEmpty {
+                        if viewModel.isLoading {
+                            skeletonLoadingView
+                        } else if viewModel.filteredItems.isEmpty {
                             emptyState
                         } else {
                             itemsList
                         }
                     }
                     .padding(.bottom, audioPlayer.isPlaying ? 90 : 20)
+                }
+                .refreshable {
+                    viewModel.loadLibrary()
                 }
                 .background(Color.appBackground)
                 .noiseTexture(opacity: 0.025)
@@ -269,6 +274,18 @@ struct LibraryView: View {
                 Label("Delete", systemImage: "trash")
             }
         }
+    }
+
+    // MARK: - Skeleton Loading View
+
+    private var skeletonLoadingView: some View {
+        VStack(spacing: 10) {
+            ForEach(0..<5, id: \.self) { _ in
+                SkeletonRow()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
     }
 
     // MARK: - Empty State - Enhanced with animations
