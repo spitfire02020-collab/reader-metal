@@ -5,8 +5,16 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var downloadService: ModelDownloadService
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "has_completed_onboarding")
+    @State private var launchStartTime: Date?
 
     var body: some View {
+        let _ = Self._printChanges()  // Debug: track view recomputations
+        let _ = {
+            if launchStartTime == nil {
+                launchStartTime = Date()
+                NSLog("[ContentView] Launch started at \(launchStartTime!)")
+            }
+        }()
         ZStack {
             LibraryView()
 
@@ -84,48 +92,65 @@ struct OnboardingView: View {
 
                 Spacer()
 
-                // Buttons
+                // Buttons with enhanced styling
                 VStack(spacing: 16) {
                     if currentPage < pages.count - 1 {
                         Button {
-                            withAnimation {
+                            withAnimation(AppAnimation.smooth) {
                                 currentPage += 1
                             }
                         } label: {
                             Text("Continue")
-                                .font(.headline)
-                                .foregroundColor(.white)
+                                .font(AppTypography.headlineMedium)
+                                .foregroundColor(.black)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 16)
-                                .background(Color.appAccent)
-                                .cornerRadius(12)
+                                .padding(.vertical, 18)
+                                .background(
+                                    Capsule()
+                                        .fill(AppGradients.accent)
+                                )
+                                .ambientGlow(.appAccent)
                         }
+                        .buttonStyle(.plain)
                         .padding(.horizontal, 24)
                     } else {
                         Button {
                             onComplete()
                         } label: {
-                            Text("Get Started")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 16)
-                                .background(Color.appAccent)
-                                .cornerRadius(12)
+                            HStack(spacing: 8) {
+                                Text("Get Started")
+                                    .font(AppTypography.headlineMedium)
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .foregroundColor(.black)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 18)
+                            .background(
+                                Capsule()
+                                    .fill(AppGradients.accent)
+                            )
+                            .ambientGlow(.appAccent)
                         }
+                        .buttonStyle(.plain)
                         .padding(.horizontal, 24)
                     }
 
                     if currentPage > 0 {
                         Button {
-                            withAnimation {
+                            withAnimation(AppAnimation.smooth) {
                                 currentPage -= 1
                             }
                         } label: {
-                            Text("Back")
-                                .font(.subheadline)
-                                .foregroundColor(.appTextSecondary)
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.left")
+                                    .font(.system(size: 12))
+                                Text("Back")
+                                    .font(AppTypography.bodyMedium)
+                            }
+                            .foregroundColor(.appTextSecondary)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.bottom, 50)

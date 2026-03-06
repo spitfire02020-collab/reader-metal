@@ -4,9 +4,14 @@ import UniformTypeIdentifiers
 // MARK: - Library View (Main Screen) - Redesigned with Glassmorphism
 
 struct LibraryView: View {
-    @StateObject private var viewModel = LibraryViewModel()
+    @StateObject private var viewModel: LibraryViewModel
     @StateObject private var audioPlayer = AudioPlayerService.shared
     @StateObject private var downloadService = ModelDownloadService.shared
+
+    init() {
+        NSLog("[LibraryView] init called - creating LibraryViewModel")
+        _viewModel = StateObject(wrappedValue: LibraryViewModel())
+    }
     /// Non-nil while the PlayerView sheet is open. sheet(item:) sets this to nil on dismiss.
     @State private var selectedItem: LibraryItem?
     /// Persists after PlayerView is dismissed – keeps the mini-player visible.
@@ -264,69 +269,90 @@ struct LibraryView: View {
         }
     }
 
-    // MARK: - Empty State - Redesigned
+    // MARK: - Empty State - Enhanced with animations
 
     private var emptyState: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 28) {
             Spacer()
                 .frame(height: 60)
 
-            // Animated icon
+            // Animated gradient icon
             ZStack {
-                // Glow
+                // Pulsing glow
                 Circle()
-                    .fill(Color.appAccent.opacity(0.15))
-                    .frame(width: 140, height: 140)
-                    .blur(radius: 30)
+                    .fill(
+                        RadialGradient(
+                            colors: [Color.appAccent.opacity(0.3), .clear],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 80
+                        )
+                    )
+                    .frame(width: 160, height: 160)
+                    .modifier(PulseModifier(color: .appAccent))
 
-                // Background circle
+                // Animated gradient background
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: [
+                                Color.appAccent.opacity(0.2),
+                                Color.appCoral.opacity(0.2),
+                                Color.appAccent.opacity(0.2)
+                            ],
+                            center: .center
+                        )
+                    )
+                    .frame(width: 120, height: 120)
+                    .rotationEffect(.degrees(360))
+                    .animation(.linear(duration: 10).repeatForever(autoreverses: false), value: UUID())
+
+                // Static background circle
                 Circle()
                     .fill(Color.appSurfaceElevated)
                     .frame(width: 100, height: 100)
 
-                // Icon
+                // Icon with gradient
                 Image(systemName: "headphones")
                     .font(.system(size: 40, weight: .ultraLight))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.appAccent, Color.appCoral],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .foregroundStyle(AppGradients.accent)
             }
 
             VStack(spacing: 8) {
                 Text("Your Library is Empty")
                     .font(AppTypography.displaySmall)
                     .foregroundStyle(Color.appTextPrimary)
+                    .stagger(0.1)
 
                 Text("Add articles, books, or paste text to start listening")
                     .font(AppTypography.bodyMedium)
                     .foregroundStyle(Color.appTextSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
+                    .stagger(0.15)
             }
 
-            // Styled Add button
+            // Enhanced Add button with premium style
             Button {
                 viewModel.showAddContent = true
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus")
+                HStack(spacing: 10) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 18))
                     Text("Add Content")
+                        .font(AppTypography.headlineSmall)
                 }
-                .font(AppTypography.headlineSmall)
                 .foregroundStyle(.black)
-                .padding(.horizontal, 28)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 16)
                 .background(
                     Capsule()
                         .fill(AppGradients.accent)
                 )
-                .shadow(color: Color.appAccent.opacity(0.4), radius: 12, y: 4)
+                .ambientGlow(.appAccent)
             }
             .buttonStyle(.plain)
+            .stagger(0.2)
             .padding(.top, 8)
         }
     }
@@ -377,23 +403,42 @@ struct LibraryView: View {
                     }
                     .padding(.horizontal, 20)
 
-                    // Download progress
+                    // Download progress with shimmer
                     if downloadService.isDownloading {
-                        VStack(spacing: 12) {
-                            ProgressView(value: downloadService.overallProgress)
-                                .tint(Color.appAccent)
-                                .scaleEffect(y: 1.5)
+                        VStack(spacing: 16) {
+                            // Shimmer progress bar
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.appSurfaceElevated)
+                                    .frame(height: 8)
 
-                            if let component = downloadService.currentComponent {
-                                Text("Downloading \(component.displayName)...")
-                                    .font(AppTypography.captionLarge)
-                                    .foregroundStyle(Color.appTextSecondary)
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(AppGradients.accent)
+                                    .frame(width: max(0, CGFloat(downloadService.overallProgress) * (UIScreen.main.bounds.width - 80)), height: 8)
+                                    .shimmer()
                             }
+                            .frame(height: 8)
+                            .padding(.horizontal, 4)
 
-                            Text("\(Int(downloadService.overallProgress * 100))%")
-                                .font(AppTypography.monoLarge)
-                                .foregroundStyle(Color.appAccent)
+                            HStack {
+                                if let component = downloadService.currentComponent {
+                                    Text("Downloading \(component.displayName)...")
+                                        .font(AppTypography.captionLarge)
+                                        .foregroundStyle(Color.appTextSecondary)
+                                }
+
+                                Spacer()
+
+                                Text("\(Int(downloadService.overallProgress * 100))%")
+                                    .font(AppTypography.monoLarge)
+                                    .foregroundStyle(Color.appAccent)
+                            }
                         }
+                        .padding(20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.appSurfaceElevated)
+                        )
                         .padding(.horizontal, 20)
                     }
 

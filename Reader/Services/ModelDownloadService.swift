@@ -158,15 +158,17 @@ final class ModelDownloadService: NSObject, ObservableObject {
     }
 
     /// Check if models exist, copy from bundle if needed
+    /// NOTE: ONNX model files (.onnx, .onnx_data) are NOT copied to Documents -
+    /// they are always loaded from the bundle where the external data file
+    /// references work correctly. Only voice files and tokenizer are copied.
     func ensureModelsExist() {
         let docsDir = modelsDirectory
         let bundleDir = bundleModelsDirectory
 
-        // List all required files
-        let variant = ModelVariant.q4f16
-        let onnxFiles = ModelComponent.allCases.map { "\($0.rawValue)\(variant.suffix).onnx" }
-        let dataFiles = ModelComponent.allCases.map { "\($0.rawValue)\(variant.suffix).onnx_data" }
-        let allRequiredFiles = onnxFiles + dataFiles + ["tokenizer.json", "default_voice.wav"]
+        // List only non-ONNX files to copy to Documents
+        // Voice files and tokenizer can be copied, but ONNX models must stay in bundle
+        // because the external .onnx_data references break when copied
+        let filesToCopy = ["tokenizer.json", "default_voice.wav"]
 
         NSLog("[ModelDownload] Checking models in: \(docsDir.path)")
         NSLog("[ModelDownload] Checking bundle: \(bundleDir.path)")
@@ -179,8 +181,8 @@ final class ModelDownloadService: NSObject, ObservableObject {
         let bundleFiles = Set((try? FileManager.default.contentsOfDirectory(atPath: bundleDir.path)) ?? [])
         NSLog("[ModelDownload] Files in bundle: \(bundleFiles)")
 
-        // Copy any missing files from bundle to Documents
-        for file in allRequiredFiles {
+        // Copy any missing files from bundle to Documents (only non-ONNX files)
+        for file in filesToCopy {
             let dstPath = docsDir.appendingPathComponent(file).path
 
             if existingInDocs.contains(file) {
@@ -203,19 +205,40 @@ final class ModelDownloadService: NSObject, ObservableObject {
             }
         }
 
-        // Verify copy worked
+        // Clean up any broken ONNX files from Documents to ensure fresh bundle load
+        let variant = ModelVariant.q4f16
+        let onnxFiles = ModelComponent.allCases.flatMap { component -> [String] in
+            ["\(component.rawValue)\(variant.suffix).onnx", "\(component.rawValue)\(variant.suffix).onnx_data"]
+        }
+
+        for file in onnxFiles {
+            let filePath = docsDir.appendingPathComponent(file).path
+            if existingInDocs.contains(file) {
+                NSLog("[ModelDownload] Removing broken ONNX file from Documents: \(file)")
+                try? FileManager.default.removeItem(atPath: filePath)
+            }
+        }
+
+        // Verify final state
         let finalFiles = Set((try? FileManager.default.contentsOfDirectory(atPath: docsDir.path)) ?? [])
         NSLog("[ModelDownload] Final files in Documents: \(finalFiles)")
     }
 
     /// Copy models from app bundle to Documents on first launch (async)
     func copyBundleModelsIfNeeded() async {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                self.ensureModelsExist()
-                self.copyVoiceFilesIfNeeded()
-                DispatchQueue.main.async {
+        NSLog("[ModelDownload] copyBundleModelsIfNeeded started")
+
+        // Run file operations on background to avoid blocking UI
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Task.detached(priority: .userInitiated) {
+                await MainActor.run {
+                    self.ensureModelsExist()
+                    self.copyVoiceFilesIfNeeded()
+                }
+
+                await MainActor.run {
                     self.checkModelAvailability()
+                    NSLog("[ModelDownload] copyBundleModelsIfNeeded completed")
                     continuation.resume()
                 }
             }
@@ -224,36 +247,84 @@ final class ModelDownloadService: NSObject, ObservableObject {
 
     func modelPath(for component: ModelComponent, variant: ModelVariant = .q4f16) -> URL {
         let filename = "\(component.rawValue)\(variant.suffix).onnx"
+
+        // First check bundle - models in bundle are properly structured
+        let bundlePath = bundleModelsDirectory.appendingPathComponent(filename)
+        if FileManager.default.fileExists(atPath: bundlePath.path) {
+            return bundlePath
+        }
+
+        // Fall back to Documents directory
         return modelsDirectory.appendingPathComponent(filename)
     }
 
     func modelDataPath(for component: ModelComponent, variant: ModelVariant = .q4f16) -> URL {
         let filename = "\(component.rawValue)\(variant.suffix).onnx_data"
         // Check bundle first - if model weights are bundled, use them directly
-        if let bundlePath = Bundle.main.path(forResource: "\(component.rawValue)\(variant.suffix)", ofType: "onnx_data", inDirectory: "ChatterboxModels") {
-            return URL(fileURLWithPath: bundlePath)
+        // Use FileManager instead of Bundle.main.path because files are in bundle root
+        let bundlePath = bundleModelsDirectory.appendingPathComponent(filename)
+        if FileManager.default.fileExists(atPath: bundlePath.path) {
+            return bundlePath
         }
         // Fall back to Documents directory (for downloaded models)
         return modelsDirectory.appendingPathComponent(filename)
     }
 
     var tokenizerPath: URL {
-        modelsDirectory.appendingPathComponent("tokenizer.json")
+        // Check bundle first - tokenizer in bundle is properly structured
+        let bundlePath = bundleModelsDirectory.appendingPathComponent("tokenizer.json")
+        if FileManager.default.fileExists(atPath: bundlePath.path) {
+            return bundlePath
+        }
+        // Fall back to Documents directory
+        return modelsDirectory.appendingPathComponent("tokenizer.json")
     }
 
     var defaultVoicePath: URL {
-        modelsDirectory.appendingPathComponent("default_voice.wav")
+        // Check bundle first
+        let bundlePath = bundleModelsDirectory.appendingPathComponent("default_voice.wav")
+        if FileManager.default.fileExists(atPath: bundlePath.path) {
+            return bundlePath
+        }
+        // Fall back to Documents directory
+        return modelsDirectory.appendingPathComponent("default_voice.wav")
     }
 
     // MARK: - Status Check
 
     func checkModelAvailability(variant: ModelVariant = .q4f16) {
+        // Check each model component
+        var missingFiles: [String] = []
+        for component in ModelComponent.allCases {
+            let modelPathURL = modelPath(for: component, variant: variant)
+            let dataPathURL = modelDataPath(for: component, variant: variant)
+
+            let modelExists = FileManager.default.fileExists(atPath: modelPathURL.path)
+            let dataExists = FileManager.default.fileExists(atPath: dataPathURL.path)
+
+            NSLog("[ModelDownload] checkModelAvailability: \(component.rawValue) model=\(modelPathURL.lastPathComponent) exists=\(modelExists), data=\(dataPathURL.lastPathComponent) exists=\(dataExists)")
+
+            if !modelExists {
+                missingFiles.append(modelPathURL.lastPathComponent)
+            }
+            if !dataExists {
+                missingFiles.append(dataPathURL.lastPathComponent)
+            }
+        }
+
+        let tokenizerExists = FileManager.default.fileExists(atPath: tokenizerPath.path)
+        NSLog("[ModelDownload] checkModelAvailability: tokenizer exists=\(tokenizerExists), path=\(tokenizerPath.lastPathComponent)")
+
+        // Also check what files exist in bundle
+        let bundleFiles = (try? FileManager.default.contentsOfDirectory(atPath: bundleModelsDirectory.path)) ?? []
+        NSLog("[ModelDownload] checkModelAvailability: bundle contains ONNX files: \(bundleFiles.filter { $0.hasSuffix(".onnx") })")
+
         let allPresent = ModelComponent.allCases.allSatisfy { component in
             FileManager.default.fileExists(atPath: modelPath(for: component, variant: variant).path) &&
             FileManager.default.fileExists(atPath: modelDataPath(for: component, variant: variant).path)
         }
-        let tokenizerPresent = FileManager.default.fileExists(atPath: tokenizerPath.path)
-        isModelReady = allPresent && tokenizerPresent
+        isModelReady = allPresent && tokenizerExists
+        NSLog("[ModelDownload] checkModelAvailability: isModelReady=\(isModelReady)")
     }
 
     /// Fix topological sort in any already-downloaded ONNX graph files.
