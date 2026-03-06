@@ -229,23 +229,41 @@ final class ModelDownloadService: NSObject, ObservableObject {
         NSLog("[ModelDownload] copyBundleModelsIfNeeded started")
 
         // Run file operations on background to avoid blocking UI
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            Task.detached(priority: .background) {
-                // Use Task { } to properly move off main actor
-                Task {
-                    await self.performBundleCopy()
-                    NSLog("[ModelDownload] copyBundleModelsIfNeeded completed")
-                    continuation.resume()
-                }
-            }
+        Task.detached(priority: .background) { [weak self] in
+            guard let self = self else { return }
+            await self.performBackgroundCopy()
+            NSLog("[ModelDownload] copyBundleModelsIfNeeded completed")
         }
     }
 
-    /// Actual work of copying files - runs off main actor
-    private func performBundleCopy() async {
+    /// Background copy operation
+    private func performBackgroundCopy() async {
+        // Compute paths directly
+        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("ChatterboxModels", isDirectory: true)
+        let bundleDir = Bundle.main.bundleURL
+
+        try? FileManager.default.createDirectory(at: docsDir, withIntermediateDirectories: true)
+
+        // Copy voice files
+        let voiceFiles = Self.builtInVoiceFiles.map { "\($0).wav" }
+        for wavFile in voiceFiles {
+            let dstPath = docsDir.appendingPathComponent(wavFile).path
+            if !FileManager.default.fileExists(atPath: dstPath) {
+                let srcPath = bundleDir.appendingPathComponent(wavFile).path
+                try? FileManager.default.copyItem(atPath: srcPath, toPath: dstPath)
+            }
+        }
+
+        // Copy tokenizer
+        let tokenizerDst = docsDir.appendingPathComponent("tokenizer.json").path
+        if !FileManager.default.fileExists(atPath: tokenizerDst) {
+            let tokenizerSrc = bundleDir.appendingPathComponent("tokenizer.json").path
+            try? FileManager.default.copyItem(atPath: tokenizerSrc, toPath: tokenizerDst)
+        }
+
+        // Update on main actor
         await MainActor.run {
-            self.ensureModelsExist()
-            self.copyVoiceFilesIfNeeded()
             self.checkModelAvailability()
         }
     }
@@ -299,14 +317,25 @@ final class ModelDownloadService: NSObject, ObservableObject {
 
     /// Async version of checkModelAvailability that runs file checks on background thread
     func checkModelAvailabilityAsync(variant: ModelVariant = .q4f16) async {
-        // Run expensive file operations on background thread
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            Task.detached(priority: .background) {
-                Task { @MainActor in
-                    self.performModelAvailabilityCheck(variant: variant)
-                    continuation.resume()
-                }
-            }
+        // Run on background to avoid blocking UI - simplified approach
+        Task.detached(priority: .background) { [weak self] in
+            guard let self = self else { return }
+            // Do file checks on background
+            await self.performBackgroundCheck(variant: variant)
+        }
+    }
+
+    /// Background check that updates main actor state
+    private func performBackgroundCheck(variant: ModelVariant) async {
+        let bundleDir = Bundle.main.bundleURL
+        let bundleFiles = (try? FileManager.default.contentsOfDirectory(atPath: bundleDir.path)) ?? []
+        let onnxFiles = bundleFiles.filter { $0.hasSuffix(".onnx") }
+
+        NSLog("[ModelDownload] checkModelAvailabilityAsync: bundle has \(onnxFiles.count) ONNX files")
+
+        await MainActor.run {
+            self.isModelReady = !onnxFiles.isEmpty
+            NSLog("[ModelDownload] checkModelAvailabilityAsync: isModelReady=\(self.isModelReady)")
         }
     }
 
