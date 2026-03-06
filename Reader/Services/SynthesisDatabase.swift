@@ -55,6 +55,7 @@ struct ChunkRow {
 
 // MARK: - Synthesis Database
 
+@MainActor
 final class SynthesisDatabase {
     static let shared = SynthesisDatabase()
 

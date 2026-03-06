@@ -793,10 +793,10 @@ final class PlayerViewModel: ObservableObject {
                         if let partRange = filename.range(of: "_part") {
                             let indexStr = String(filename[partRange.upperBound...])
                             if let chunkIndex = Int(indexStr) {
-                                // Track in database
-                                try? self.synthesisDB.updateItemProgress(id: itemId)
-                                if let progress = try? self.synthesisDB.getProgress(itemId: itemId) {
-                                    Task { @MainActor in
+                                // Track in database (wrap in Task for MainActor isolation)
+                                Task { @MainActor in
+                                    try? self.synthesisDB.updateItemProgress(id: itemId)
+                                    if let progress = try? self.synthesisDB.getProgress(itemId: itemId) {
                                         self.synthesisProgress = progress
                                     }
                                 }
