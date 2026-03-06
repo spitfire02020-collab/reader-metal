@@ -12,7 +12,6 @@ struct ContentView: View {
         let _ = {
             if launchStartTime == nil {
                 launchStartTime = Date()
-                NSLog("[ContentView] Launch started at \(launchStartTime!)")
             }
         }()
         ZStack {
