@@ -274,67 +274,64 @@ final class ChatterboxEngine: ObservableObject {
         }
         NSLog("[Chatterbox] synthesize: speaker encoded, processing \(chunks.count) chunk(s)")
 
-        // Step 3: Process chunks in PARALLEL for faster generation
-        // Each chunk is independent and uses the same speakerContext
-        // Capture needed values for parallel processing
+        // Step 3: Process chunks SEQUENTIALLY to prevent memory exhaustion
+        // Processing 173 chunks in parallel causes OOM (SIGKILL) - must process one at a time
+        // Each chunk completion triggers the callback for true streaming playback
         let speakerCtx = speakerContext
         let chunkCount = chunks.count
         let configCopy = generationConfig
 
-        // Process chunks in parallel and call callback as EACH chunk completes (not after ALL complete)
-        // This enables true streaming - first chunk can play while others are still synthesizing
-        let audioResults: [(Int, [Float])] = await withTaskGroup(of: (Int, [Float]?).self) { group in
-            for (index, chunk) in chunks.enumerated() {
-                // Skip empty chunks, strip quotes for TTS
-                let trimmedChunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
-                let chunkForTTS = stripQuotes(trimmedChunk)
-                if chunkForTTS.isEmpty {
-                    continue
-                }
+        var audioResults: [(Int, [Float])] = []
 
-                group.addTask { [self] in
-                    NSLog("[Chatterbox] synthesizing chunk \(index+1)/\(chunkCount) (\(chunkForTTS.count) chars)")
-                    do {
-                        let audio = try await self.synthesizeChunk(chunkForTTS, speakerContext: speakerCtx, generationConfig: configCopy)
-                        return (index, audio)
-                    } catch {
-                        NSLog("[Chatterbox] chunk \(index) failed: \(error)")
-                        return (index, nil)
-                    }
-                }
+        for (index, chunk) in chunks.enumerated() {
+            // Skip empty chunks, strip quotes for TTS
+            let trimmedChunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+            let chunkForTTS = stripQuotes(trimmedChunk)
+            if chunkForTTS.isEmpty {
+                continue
             }
 
-            var results: [(Int, [Float])] = []
-            // CRITICAL FIX: Process results AS THEY ARRIVE, not after all complete
-            // This is the key to streaming - callback fires for each chunk as it finishes
-            for await (index, audio) in group {
-                if let audio = audio {
-                    results.append((index, audio))
+            NSLog("[Chatterbox] synthesizing chunk \(index+1)/\(chunkCount) (\(chunkForTTS.count) chars)")
 
-                    // Write chunk file and notify callback IMMEDIATELY when this chunk completes
-                    // This is the key fix: streaming playback while other chunks are still synthesizing
-                    let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
-                    do {
-                        try writeWAV(samples: audio, to: chunkURL, sampleRate: config.sampleRate)
+            do {
+                // Synthesize this chunk
+                NSLog("[Chatterbox] synthesizeChunk started for chunk \(index+1)")
+                let audio = try await self.synthesizeChunk(chunkForTTS, speakerContext: speakerCtx, generationConfig: configCopy)
+                NSLog("[Chatterbox] synthesizeChunk SUCCESS, audio samples: \(audio.count)")
+                audioResults.append((index, audio))
 
-                        // Call the callback for this specific chunk IMMEDIATELY after it completes
-                        if let onChunkReady = onChunkReady {
-                            NSLog("[Chatterbox] Calling onChunkReady for chunk \(index)/\(chunkCount) - streaming while others synthesize")
-                            await MainActor.run {
-                                onChunkReady(chunkURL)
-                            }
-                        }
-                    } catch {
-                        NSLog("[Chatterbox] Failed to write chunk \(index): \(error)")
+                // Write chunk file and notify callback IMMEDIATELY when chunk completes
+                // This is the key to streaming - callback fires for each chunk as it finishes
+                let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
+                NSLog("[Chatterbox] Writing chunk \(index) to: \(chunkURL.path)")
+                try writeWAV(samples: audio, to: chunkURL, sampleRate: config.sampleRate)
+                NSLog("[Chatterbox] Chunk file written successfully")
+
+                // Call the callback for this specific chunk IMMEDIATELY after it completes
+                if let onChunkReady = onChunkReady {
+                    NSLog("[Chatterbox] Calling onChunkReady for chunk \(index+1)/\(chunkCount)")
+                    await MainActor.run {
+                        onChunkReady(chunkURL)
+                    }
+                } else {
+                    NSLog("[Chatterbox] WARNING: onChunkReady callback is NIL!")
+                }
+
+                // Update progress after each chunk
+                let progress = Double(index + 1) / Double(chunkCount)
+                if let onProgress = onProgress {
+                    await MainActor.run {
+                        onProgress(progress)
                     }
                 }
+
+            } catch {
+                NSLog("[Chatterbox] chunk \(index) FAILED: \(error)")
+                // Continue with next chunk even if this one fails
             }
-            // Sort by index to maintain order
-            return results.sorted { $0.0 < $1.0 }
         }
 
         // All chunks have been processed - callback was called as each chunk completed
-        // Now just write the final concatenated WAV (used on subsequent opens)
         NSLog("[Chatterbox] All \(chunks.count) chunks complete - callback fired during synthesis for streaming")
 
         if let onProgress = onProgress {
