@@ -274,65 +274,96 @@ final class ChatterboxEngine: ObservableObject {
         }
         NSLog("[Chatterbox] synthesize: speaker encoded, processing \(chunks.count) chunk(s)")
 
-        // Step 3: Process chunks SEQUENTIALLY to prevent memory exhaustion
-        // Processing 173 chunks in parallel causes OOM (SIGKILL) - must process one at a time
+        // Step 3: Process chunks in PARALLEL with LIMITED CONCURRENCY
+        // Running 173 tasks in parallel causes OOM - use batch size of 4
         // Each chunk completion triggers the callback for true streaming playback
         let speakerCtx = speakerContext
         let chunkCount = chunks.count
         let configCopy = generationConfig
+        let maxConcurrent = 4  // Limit to prevent OOM
 
         var audioResults: [(Int, [Float])] = []
 
+        // Prepare non-empty chunks with their indices
+        var chunkTasks: [(index: Int, text: String)] = []
         for (index, chunk) in chunks.enumerated() {
-            // Skip empty chunks, strip quotes for TTS
             let trimmedChunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
             let chunkForTTS = stripQuotes(trimmedChunk)
-            if chunkForTTS.isEmpty {
-                continue
-            }
-
-            NSLog("[Chatterbox] synthesizing chunk \(index+1)/\(chunkCount) (\(chunkForTTS.count) chars)")
-
-            do {
-                // Synthesize this chunk
-                NSLog("[Chatterbox] synthesizeChunk started for chunk \(index+1)")
-                let audio = try await self.synthesizeChunk(chunkForTTS, speakerContext: speakerCtx, generationConfig: configCopy)
-                NSLog("[Chatterbox] synthesizeChunk SUCCESS, audio samples: \(audio.count)")
-                audioResults.append((index, audio))
-
-                // Write chunk file and notify callback IMMEDIATELY when chunk completes
-                // This is the key to streaming - callback fires for each chunk as it finishes
-                let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
-                NSLog("[Chatterbox] Writing chunk \(index) to: \(chunkURL.path)")
-                try writeWAV(samples: audio, to: chunkURL, sampleRate: config.sampleRate)
-                NSLog("[Chatterbox] Chunk file written successfully")
-
-                // Call the callback for this specific chunk IMMEDIATELY after it completes
-                if let onChunkReady = onChunkReady {
-                    NSLog("[Chatterbox] Calling onChunkReady for chunk \(index+1)/\(chunkCount)")
-                    await MainActor.run {
-                        onChunkReady(chunkURL)
-                    }
-                } else {
-                    NSLog("[Chatterbox] WARNING: onChunkReady callback is NIL!")
-                }
-
-                // Update progress after each chunk
-                let progress = Double(index + 1) / Double(chunkCount)
-                if let onProgress = onProgress {
-                    await MainActor.run {
-                        onProgress(progress)
-                    }
-                }
-
-            } catch {
-                NSLog("[Chatterbox] chunk \(index) FAILED: \(error)")
-                // Continue with next chunk even if this one fails
+            if !chunkForTTS.isEmpty {
+                chunkTasks.append((index, chunkForTTS))
             }
         }
 
-        // All chunks have been processed - callback was called as each chunk completed
-        NSLog("[Chatterbox] All \(chunks.count) chunks complete - callback fired during synthesis for streaming")
+        // Process in batches of maxConcurrent
+        let totalBatches = (chunkTasks.count + maxConcurrent - 1) / maxConcurrent
+
+        for batchIdx in 0..<totalBatches {
+            let startIdx = batchIdx * maxConcurrent
+            let endIdx = min(startIdx + maxConcurrent, chunkTasks.count)
+            let batch = Array(chunkTasks[startIdx..<endIdx])
+
+            NSLog("[Chatterbox] Processing batch \(batchIdx + 1)/\(totalBatches) with \(batch.count) tasks")
+
+            // Process this batch in parallel
+            let batchResults: [(Int, [Float])] = await withTaskGroup(of: (Int, [Float]?).self) { group in
+                for (index, chunkText) in batch {
+                    group.addTask { [self] in
+                        NSLog("[Chatterbox] synthesizing chunk \(index+1)/\(chunkCount) (\(chunkText.count) chars)")
+                        do {
+                            let audio = try await self.synthesizeChunk(chunkText, speakerContext: speakerCtx, generationConfig: configCopy)
+                            NSLog("[Chatterbox] synthesizeChunk SUCCESS chunk \(index+1), samples: \(audio.count)")
+                            return (index, audio)
+                        } catch {
+                            NSLog("[Chatterbox] chunk \(index) FAILED: \(error)")
+                            return (index, nil)
+                        }
+                    }
+                }
+
+                var results: [(Int, [Float])] = []
+                // Process results as they complete (not after all complete)
+                for await (index, audio) in group {
+                    if let audio = audio {
+                        results.append((index, audio))
+
+                        // Write chunk file immediately when this chunk completes
+                        let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
+                        do {
+                            try writeWAV(samples: audio, to: chunkURL, sampleRate: config.sampleRate)
+                            NSLog("[Chatterbox] Chunk \(index) file written: \(chunkURL.lastPathComponent)")
+
+                            // Call callback IMMEDIATELY when this chunk completes
+                            if let onChunkReady = onChunkReady {
+                                NSLog("[Chatterbox] Calling onChunkReady for chunk \(index+1)/\(chunkCount)")
+                                await MainActor.run {
+                                    onChunkReady(chunkURL)
+                                }
+                            } else {
+                                NSLog("[Chatterbox] WARNING: onChunkReady callback is NIL!")
+                            }
+                        } catch {
+                            NSLog("[Chatterbox] Failed to write chunk \(index): \(error)")
+                        }
+                    }
+                }
+                return results
+            }
+
+            // Add batch results to overall results
+            audioResults.append(contentsOf: batchResults)
+
+            // Update progress after batch completes
+            let completedCount = audioResults.count
+            let progress = Double(completedCount) / Double(chunkCount)
+            if let onProgress = onProgress {
+                await MainActor.run {
+                    onProgress(progress)
+                }
+            }
+        }
+
+        // All chunks have been processed
+        NSLog("[Chatterbox] All \(chunks.count) chunks complete - callback fired during synthesis")
 
         if let onProgress = onProgress {
             await MainActor.run {
