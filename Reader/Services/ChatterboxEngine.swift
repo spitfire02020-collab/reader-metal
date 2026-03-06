@@ -232,6 +232,7 @@ final class ChatterboxEngine: ObservableObject {
         cfgWeight: Float = 0.5,
         speedFactor: Float = 1.0
     ) async throws {
+        NSLog("[Chatterbox] synthesize() called, onChunkReady=\(onChunkReady != nil)")
         guard isLoaded else { throw ChatterboxError.modelNotLoaded }
 
         isSynthesizing = true
@@ -280,6 +281,8 @@ final class ChatterboxEngine: ObservableObject {
         let chunkCount = chunks.count
         let configCopy = generationConfig
 
+        // Process chunks in parallel and call callback as EACH chunk completes (not after ALL complete)
+        // This enables true streaming - first chunk can play while others are still synthesizing
         let audioResults: [(Int, [Float])] = await withTaskGroup(of: (Int, [Float]?).self) { group in
             for (index, chunk) in chunks.enumerated() {
                 // Skip empty chunks, strip quotes for TTS
@@ -302,40 +305,37 @@ final class ChatterboxEngine: ObservableObject {
             }
 
             var results: [(Int, [Float])] = []
+            // CRITICAL FIX: Process results AS THEY ARRIVE, not after all complete
+            // This is the key to streaming - callback fires for each chunk as it finishes
             for await (index, audio) in group {
                 if let audio = audio {
                     results.append((index, audio))
+
+                    // Write chunk file and notify callback IMMEDIATELY when this chunk completes
+                    // This is the key fix: streaming playback while other chunks are still synthesizing
+                    let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
+                    do {
+                        try writeWAV(samples: audio, to: chunkURL, sampleRate: config.sampleRate)
+
+                        // Call the callback for this specific chunk IMMEDIATELY after it completes
+                        if let onChunkReady = onChunkReady {
+                            NSLog("[Chatterbox] Calling onChunkReady for chunk \(index)/\(chunkCount) - streaming while others synthesize")
+                            await MainActor.run {
+                                onChunkReady(chunkURL)
+                            }
+                        }
+                    } catch {
+                        NSLog("[Chatterbox] Failed to write chunk \(index): \(error)")
+                    }
                 }
             }
             // Sort by index to maintain order
             return results.sorted { $0.0 < $1.0 }
         }
 
-        // Collect all audio samples and write chunk files
-        var allAudioSamples: [Float] = []
-        for (index, chunkAudio) in audioResults {
-            allAudioSamples.append(contentsOf: chunkAudio)
-
-            // Write chunk file and notify (now that all are ready)
-            if onChunkReady != nil {
-                let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
-                try writeWAV(samples: chunkAudio, to: chunkURL, sampleRate: config.sampleRate)
-            }
-
-            let progress = Double(index + 1) / Double(chunks.count)
-            synthesisProgress = progress
-        }
-
-        // Notify about all chunk files being ready
-        if let onChunkReady = onChunkReady {
-            // Call onChunkReady for each chunk in order
-            for index in 0..<chunks.count {
-                let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
-                await MainActor.run {
-                    onChunkReady(chunkURL)
-                }
-            }
-        }
+        // All chunks have been processed - callback was called as each chunk completed
+        // Now just write the final concatenated WAV (used on subsequent opens)
+        NSLog("[Chatterbox] All \(chunks.count) chunks complete - callback fired during synthesis for streaming")
 
         if let onProgress = onProgress {
             await MainActor.run {
@@ -344,6 +344,8 @@ final class ChatterboxEngine: ObservableObject {
         }
 
         // Step 4: Write the final concatenated WAV (used on subsequent opens).
+        // Note: individual chunk files were already written in the TaskGroup loop above
+        let allAudioSamples = audioResults.flatMap { $0.1 }
         try writeWAV(samples: allAudioSamples, to: outputURL, sampleRate: config.sampleRate)
 
         synthesisProgress = 1.0

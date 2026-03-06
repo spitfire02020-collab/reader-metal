@@ -176,8 +176,13 @@ final class PlayerViewModel: ObservableObject {
         self.onItemUpdate = onItemUpdate
 
         // Stop any current playback and cancel synthesis from previous article
-        self.audioPlayer.stop()
-        self.audioPlayer.clearPlaybackState(self.audioPlayer.currentPlayingItemID ?? UUID())
+        // Use Task to defer to avoid "Publishing changes from within view updates" error
+        Task { @MainActor in
+            self.audioPlayer.stop()
+            if let playingID = self.audioPlayer.currentPlayingItemID {
+                self.audioPlayer.clearPlaybackState(playingID)
+            }
+        }
 
         // Cancel any ongoing synthesis task
         self.synthesisTask?.cancel()
@@ -692,51 +697,71 @@ final class PlayerViewModel: ObservableObject {
             }
 
             NSLog("[PlayerVM] Starting synthesizeStream, text length: \(item.textContent.count)")
-            // Use async stream for proper backpressure handling
-            let stream = engine.synthesizeStream(
-                text: item.textContent,
-                referenceAudioURL: refAudioURL,
-                outputURL: outputURL,
-                seed: synthesisSettings.seed,
-                exaggeration: Float(synthesisSettings.exaggeration),
-                cfgWeight: Float(synthesisSettings.cfgWeight),
-                speedFactor: Float(synthesisSettings.speed)
-            )
-
-            // Tell delegate to wait for more chunks if playback catches up
+            // Use callback-based synthesis instead of broken AsyncThrowingStream
+            // The stream has Swift concurrency issues with @MainActor
+            // Wrap in Task.detached to run ONNX inference off main thread to prevent UI freeze
             audioPlayer.isExpectingMoreChunks = true
-            NSLog("[PlayerVM] set isExpectingMoreChunks = true, starting stream")
+            NSLog("[PlayerVM] starting callback-based synthesis")
 
-            // Check for cancellation at start of each chunk iteration
-            for try await chunk in stream {
-                // Check if synthesis was cancelled (user paused)
-                if Task.isCancelled {
-                    NSLog("[PlayerVM] Synthesis cancelled by user")
-                    break
-                }
-
-                // Update progress
-                synthesisProgress = chunk.progress
-
-                // Handle chunk playback with proper backpressure
-                if chunk.isFirst {
-                    // First chunk: start streaming playback
-                    audioPlayer.startStreaming(
-                        firstChunkURL: chunk.url,
-                        title: item.title,
-                        artist: item.displayAuthor
-                    )
-                    isStreamingAudio = true
-                    // First chunk started
-                } else {
-                    // No backpressure - just append chunks as they arrive
-                    NSLog("[PlayerVM] appending chunk, isFirst=\(chunk.isFirst), isLast=\(chunk.isLast), progress=\(chunk.progress)")
-                    audioPlayer.appendStreamChunk(chunk.url)
-                }
+            // Use actor-like isolation with a class wrapper to track first chunk
+            class ChunkTracker: @unchecked Sendable {
+                var firstURL: URL? = nil
             }
+            let tracker = ChunkTracker()
 
-            // Synthesis complete — persist the final concatenated file.
-            NSLog("[PlayerVM] stream complete, setting isExpectingMoreChunks = false")
+            // Capture UI state for use in callbacks
+            let itemTitle = item.title
+            let itemArtist = item.displayAuthor
+            let itemTextContent = item.textContent
+            let itemId = item.id.uuidString
+
+            // Run synthesis on background thread to prevent UI freezing
+            try await Task.detached(priority: .userInitiated) { [weak self] in
+                guard let self = self else { return }
+                let engine = self.engine
+                let audioPlayer = self.audioPlayer
+
+                try await engine.synthesize(
+                    text: itemTextContent,
+                    referenceAudioURL: refAudioURL,
+                    outputURL: outputURL,
+                    onChunkReady: { [weak self] chunkURL in
+                        guard let self = self else { return }
+                        NSLog("[PlayerVM] onChunkReady callback received: \(chunkURL.lastPathComponent)")
+
+                        // All UI updates must be dispatched to main actor
+                        Task { @MainActor in
+                            if tracker.firstURL == nil {
+                                // First chunk: start streaming playback
+                                tracker.firstURL = chunkURL
+                                NSLog("[PlayerVM] First chunk, starting streaming playback")
+                                self.audioPlayer.startStreaming(
+                                    firstChunkURL: chunkURL,
+                                    title: itemTitle,
+                                    artist: itemArtist
+                                )
+                                self.isStreamingAudio = true
+                            } else {
+                                // Subsequent chunks: append to stream
+                                NSLog("[PlayerVM] Appending chunk to stream")
+                                self.audioPlayer.appendStreamChunk(chunkURL)
+                            }
+                        }
+                    },
+                    onProgress: { [weak self] progress in
+                        Task { @MainActor in
+                            self?.synthesisProgress = progress
+                        }
+                    },
+                    seed: synthesisSettings.seed,
+                    exaggeration: Float(synthesisSettings.exaggeration),
+                    cfgWeight: Float(synthesisSettings.cfgWeight),
+                    speedFactor: Float(synthesisSettings.speed)
+                )
+            }.value
+
+            // Synthesis complete
+            NSLog("[PlayerVM] callback synthesis complete")
             audioPlayer.isExpectingMoreChunks = false
             item.audioFileURL = outputURL.path
             item.status = .ready
