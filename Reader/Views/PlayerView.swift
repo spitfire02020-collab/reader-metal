@@ -399,24 +399,28 @@ struct PlayerView: View {
                             .frame(width: 68, height: 68)
                             .shadow(color: Color.appAccent.opacity(0.5), radius: 16, y: 6)
 
-                        // Icon
+                        // Icon with smooth transition
                         if viewModel.isSynthesizing || isPlayingSelection {
                             Image(systemName: viewModel.isPaused ? "play.fill" : "stop.fill")
                                 .font(.system(size: 26, weight: .bold))
                                 .foregroundStyle(.white)
+                                .transition(.scale.combined(with: .opacity))
                         } else if viewModel.audioPlayer.isPlaying {
                             Image(systemName: "pause.fill")
                                 .font(.system(size: 26, weight: .bold))
                                 .foregroundStyle(.white)
+                                .transition(.scale.combined(with: .opacity))
                         } else {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 26, weight: .bold))
                                 .foregroundStyle(.white)
                                 .offset(x: 2)
+                                .transition(.scale.combined(with: .opacity))
                         }
                     }
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.audioPlayer.isPlaying)
                 }
-                .buttonStyle(PlayButtonStyle())
+                .buttonStyle(PlayButtonStyle(isPlaying: viewModel.audioPlayer.isPlaying))
 
                 Spacer()
 

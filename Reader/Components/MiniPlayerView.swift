@@ -146,7 +146,7 @@ struct MiniPlayerView: View {
                     .offset(x: audioPlayer.isPlaying ? 0 : 1)
             }
         }
-        .buttonStyle(PlayButtonStyle())
+        .buttonStyle(PlayButtonStyle(isPlaying: audioPlayer.isPlaying))
     }
 
     // MARK: - Glass Background
@@ -188,9 +188,13 @@ struct MiniPlayerView: View {
 // MARK: - Custom Button Style for Play Button
 
 struct PlayButtonStyle: ButtonStyle {
+    var isPlaying: Bool = false
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.9 : 1.0)
-            .animation(AppAnimation.quick, value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.88 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(.easeInOut(duration: 0.15), value: configuration.isPressed)
+            .animation(.easeInOut(duration: 0.3), value: isPlaying)
     }
 }

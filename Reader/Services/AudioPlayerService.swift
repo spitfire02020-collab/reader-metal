@@ -176,6 +176,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
         setupAudioSession()
         setupRemoteTransportControls()
         setupAudioEngine()
+        setupAudioInterruptionObservers()
 
         // Listen for app lifecycle to properly manage audio session
         NotificationCenter.default.addObserver(
@@ -229,6 +230,86 @@ final class AudioPlayerService: NSObject, ObservableObject {
             try session.setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
             print("Audio session deactivation failed: \(error)")
+        }
+    }
+
+    // MARK: - Audio Interruption Handling
+
+    /// Setup audio session interruption and route change observers
+    private func setupAudioInterruptionObservers() {
+        // Audio interruption (phone calls, Siri, other apps)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+
+        // Audio route change (headphones disconnected, etc.)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange),
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+    }
+
+    /// Handle audio session interruptions (phone calls, Siri, etc.)
+    @objc private func handleAudioInterruption(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        NSLog("[AudioPlayer] Interruption type: \(type)")
+
+        switch type {
+        case .began:
+            // Audio interrupted - pause playback
+            NSLog("[AudioPlayer] Interruption began - pausing")
+            pause()
+
+        case .ended:
+            // Interruption ended - check if we should resume
+            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else {
+                return
+            }
+
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            if options.contains(.shouldResume) {
+                // Resume playback
+                NSLog("[AudioPlayer] Interruption ended - resuming playback")
+                play()
+            }
+
+        @unknown default:
+            NSLog("[AudioPlayer] Unknown interruption type")
+        }
+    }
+
+    /// Handle audio route changes (headphones disconnected, etc.)
+    @objc private func handleRouteChange(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            return
+        }
+
+        NSLog("[AudioPlayer] Route change reason: \(reason)")
+
+        switch reason {
+        case .oldDeviceUnavailable:
+            // Headphones were unplugged - pause playback
+            NSLog("[AudioPlayer] Audio device removed - pausing playback")
+            pause()
+
+        case .newDeviceAvailable:
+            // New audio device connected (e.g., headphones)
+            NSLog("[AudioPlayer] New audio device available")
+
+        default:
+            break
         }
     }
 
