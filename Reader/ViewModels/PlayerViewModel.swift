@@ -249,25 +249,34 @@ final class PlayerViewModel: ObservableObject {
     }
 
     /// Restart synthesis with current voice (used when voice/settings change during playback)
+    /// Uses database for full resume capability
     private func restartWithNewVoice() {
         // Get current position before stopping
         let currentChunkIndex = audioPlayer.currentChunkIndex
-        NSLog("[PlayerVM] Voice changed at chunk \(currentChunkIndex), restarting from there")
+        let itemId = item.id.uuidString
+        NSLog("[PlayerVM] Voice changed at chunk \(currentChunkIndex), restarting from there using DB")
 
-        // Stop current playback but don't clear audio files yet
+        // Stop current playback
         audioPlayer.stop()
+        audioPlayer.clearAudioFiles()
         synthesisTask?.cancel()
         isSynthesizing = false
         isStreamingAudio = false
+        isPaused = false
 
         // Reset highlighting
         currentPlayingIndex = -1
 
-        // Clear audio files from current position onwards (to force re-synthesis)
+        // Clear in-memory chunks from current position onwards
+        let chunksToRemove = item.generatedChunks.keys.filter { $0 >= currentChunkIndex }
+        for key in chunksToRemove {
+            item.generatedChunks.removeValue(forKey: key)
+        }
+
+        // Clear audio files on disk from current position onwards
         let outputDir = chunkDirectory
         if let files = try? FileManager.default.contentsOfDirectory(at: outputDir, includingPropertiesForKeys: nil) {
             for file in files {
-                // Extract chunk index from filename like "uuid_part0.wav"
                 let filename = file.deletingPathExtension().lastPathComponent
                 if let partRange = filename.range(of: "_part") {
                     let indexStr = String(filename[partRange.upperBound...])
@@ -279,17 +288,24 @@ final class PlayerViewModel: ObservableObject {
             }
         }
 
-        // Clear in-memory chunks from current position onwards
-        let chunksToRemove = item.generatedChunks.keys.filter { $0 >= currentChunkIndex }
-        for key in chunksToRemove {
-            item.generatedChunks.removeValue(forKey: key)
-        }
-        NSLog("[PlayerVM] Cleared \(chunksToRemove.count) chunks from index \(currentChunkIndex) onwards")
+        // Update database: reset voice and reset chunks from current position
+        Task { @MainActor in
+            // Update voice in database
+            try? self.synthesisDB.updateItemVoice(id: itemId, voiceId: self.selectedVoice.id)
 
-        // Start new synthesis from current position
-        audioPlayer.currentChunkIndex = currentChunkIndex
-        synthesisTask = Task {
-            await self.startSynthesisInternal(startingFromChunk: currentChunkIndex)
+            // Reset chunks from current position in database (they'll be re-synthesized)
+            try? self.synthesisDB.resetChunksFromIndex(itemId: itemId, fromIndex: currentChunkIndex)
+
+            // Update status to synthesizing
+            try? self.synthesisDB.updateItemStatus(id: itemId, status: SynthesisItemStatus.synthesizing)
+
+            // Update item progress in database
+            try? self.synthesisDB.updateItemProgress(id: itemId)
+
+            NSLog("[PlayerVM] Database updated for voice change - resuming from chunk \(currentChunkIndex)")
+
+            // Start synthesis from current chunk - this uses the remaining text
+            await self.startSynthesisFromChunk(currentChunkIndex)
         }
     }
 

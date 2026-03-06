@@ -270,6 +270,36 @@ final class SynthesisDatabase {
         ))
     }
 
+    /// Update synthesis item voice
+    func updateItemVoice(id: String, voiceId: String) throws {
+        let now = Date().timeIntervalSince1970
+        let query = synthesisItems.filter(siId == id)
+        try db?.run(query.update(
+            siVoiceId <- voiceId,
+            siUpdatedAt <- now
+        ))
+        NSLog("[SynthesisDB] Updated item \(id) voice to \(voiceId)")
+    }
+
+    /// Reset chunks from a certain index onwards (for re-synthesis with new voice)
+    func resetChunksFromIndex(itemId: String, fromIndex: Int) throws {
+        guard let db else { return }
+
+        let now = Date().timeIntervalSince1970
+        let query = chunks.filter(chItemId == itemId && chChunkIndex >= fromIndex)
+
+        // Reset status to pending and clear file path
+        try db.run(query.update(
+            chStatus <- ChunkStatus.pending.rawValue,
+            chFilePath <- nil as String?,
+            chErrorMessage <- nil as String?,
+            chRetryCount <- 0,
+            chDurationSeconds <- nil as Double?,
+            chUpdatedAt <- now
+        ))
+        NSLog("[SynthesisDB] Reset chunks from index \(fromIndex) for item \(itemId)")
+    }
+
     /// Delete synthesis item and all chunks
     func deleteItem(id: String) throws {
         let query = synthesisItems.filter(siId == id)
