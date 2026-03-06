@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Player View (Text-focused reader with floating controls) - Redesigned
 
@@ -288,10 +289,11 @@ struct PlayerView: View {
                             .fill(Color.appSurfaceElevated.opacity(0.5))
                             .frame(height: 6)
 
-                        // Progress fill - use total estimated duration for accurate progress
+                        // Progress fill - show synthesis progress when synthesizing, playback progress otherwise
+                        let progressToShow = viewModel.isSynthesizing ? viewModel.synthesisProgress : viewModel.playbackProgress
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(AppGradients.accent)
-                            .frame(width: max(0, geometry.size.width * viewModel.playbackProgress), height: 6)
+                            .fill(viewModel.isSynthesizing ? Color.appAccent : Color.appAccent)
+                            .frame(width: max(0, geometry.size.width * progressToShow), height: 6)
                             .shadow(color: Color.appAccent.opacity(0.5), radius: 6, y: 0)
                     }
                     .contentShape(Rectangle())
@@ -323,9 +325,11 @@ struct PlayerView: View {
                             AnimatedWaveformView(barCount: 12, accentColor: Color.appAccent)
                                 .frame(width: 40, height: 16)
 
-                            Text("Generating \(Int(viewModel.synthesisProgress * 100))%")
-                                .font(AppTypography.captionLarge)
+                            // Progress percentage with glow effect
+                            Text("\(Int(viewModel.synthesisProgress * 100))%")
+                                .font(AppTypography.mono)
                                 .foregroundStyle(Color.appAccent)
+                                .shadow(color: Color.appAccent.opacity(0.5), radius: 4)
                         }
                     } else if viewModel.audioPlayer.isPlaying {
                         HStack(spacing: 6) {
@@ -366,12 +370,14 @@ struct PlayerView: View {
                 // Left actions
                 HStack(spacing: 20) {
                     QuickActionButton(icon: "gobackward.15", label: "15s") {
+                        playHaptic(.light)
                         viewModel.audioPlayer.skipBackward()
                     }
                     .opacity(viewModel.canPlay || viewModel.audioPlayer.isPlaying ? 1 : 0.3)
                     .disabled(!viewModel.canPlay && !viewModel.audioPlayer.isPlaying)
 
                     QuickActionButton(icon: "goforward.15", label: "15s") {
+                        playHaptic(.light)
                         viewModel.audioPlayer.skipForward()
                     }
                     .opacity(viewModel.canPlay || viewModel.audioPlayer.isPlaying ? 1 : 0.3)
@@ -400,7 +406,28 @@ struct PlayerView: View {
                             .shadow(color: Color.appAccent.opacity(0.5), radius: 16, y: 6)
 
                         // Icon with smooth transition
-                        if viewModel.isSynthesizing || isPlayingSelection {
+                        if viewModel.isSynthesizing {
+                            // Show circular progress during synthesis
+                            ZStack {
+                                // Background circle
+                                Circle()
+                                    .stroke(Color.white.opacity(0.3), lineWidth: 3)
+                                    .frame(width: 44, height: 44)
+
+                                // Progress arc
+                                Circle()
+                                    .trim(from: 0, to: viewModel.synthesisProgress)
+                                    .stroke(Color.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                                    .frame(width: 44, height: 44)
+                                    .rotationEffect(.degrees(-90))
+                                    .animation(.linear(duration: 0.1), value: viewModel.synthesisProgress)
+
+                                // Percentage text
+                                Text("\(Int(viewModel.synthesisProgress * 100))")
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white)
+                            }
+                        } else if isPlayingSelection {
                             Image(systemName: viewModel.isPaused ? "play.fill" : "stop.fill")
                                 .font(.system(size: 26, weight: .bold))
                                 .foregroundStyle(.white)
@@ -458,11 +485,14 @@ struct PlayerView: View {
         }
 
         if viewModel.isSynthesizing {
+            playHaptic(.rigid)
             viewModel.stopGeneration()
         } else if isPlayingSelection {
+            playHaptic(.light)
             viewModel.audioPlayer.stop()
             isPlayingSelection = false
         } else {
+            playHaptic(.medium)
             viewModel.playFromCurrentPosition()
         }
     }

@@ -47,6 +47,7 @@
 		C9801D82B3598521F68FBCB0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C7A08DDC8989AC474CA78BF /* ContentView.swift */; };
 		C9D495B65024283A10E11717 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A484B5F72BA8491B42A7EB6A /* LibraryView.swift */; };
 		CADC0F569736BBB92509AD54 /* ModelDownloadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC6E6E74FA806E8B4D80B03D /* ModelDownloadService.swift */; };
+		DBF8C6E775DCFE42863191BE /* HapticFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2D7560B0FD1CA49A4FFDAD0 /* HapticFeedback.swift */; };
 		DDEBC41B6AF0C4F3226D4C51 /* BookParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFCD7FE661A4214FA2CFB3FE /* BookParser.swift */; };
 		E1B64984EF342473BAEA9C17 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92A3FC5F094E7E271ED14097 /* SettingsView.swift */; };
 		E93D736C29808207D47DCE64 /* default_voice.wav in Resources */ = {isa = PBXBuildFile; fileRef = 4A6D8EC036C82852FD4ED0CF /* default_voice.wav */; };
@@ -96,6 +97,7 @@
 		A484B5F72BA8491B42A7EB6A /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		AC46C4EE1E347D29CB58FB6D /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
 		AF7EA5018E4A65164B397831 /* VoiceProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProfile.swift; sourceTree = "<group>"; };
+		B2D7560B0FD1CA49A4FFDAD0 /* HapticFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticFeedback.swift; sourceTree = "<group>"; };
 		BC6E6E74FA806E8B4D80B03D /* ModelDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadService.swift; sourceTree = "<group>"; };
 		BFCD7FE661A4214FA2CFB3FE /* BookParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookParser.swift; sourceTree = "<group>"; };
 		CDCB6111E879C860BEF6509A /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
@@ -231,6 +233,7 @@
 			isa = PBXGroup;
 			children = (
 				EAEE67288ED13F903EEAC7B8 /* Color+Extensions.swift */,
+				B2D7560B0FD1CA49A4FFDAD0 /* HapticFeedback.swift */,
 			);
 			path = Extensions;
 			sourceTree = "<group>";
@@ -397,6 +400,7 @@
 				561C3F3E331D5D84D4419177 /* ChatterboxEngine.swift in Sources */,
 				46D9E02F513A87419DB3BCAF /* Color+Extensions.swift in Sources */,
 				C9801D82B3598521F68FBCB0 /* ContentView.swift in Sources */,
+				DBF8C6E775DCFE42863191BE /* HapticFeedback.swift in Sources */,
 				ECA5E0E3D07978F6D54832B3 /* LibraryItem.swift in Sources */,
 				C9D495B65024283A10E11717 /* LibraryView.swift in Sources */,
 				44907469286C169F479963EA /* LibraryViewModel.swift in Sources */,

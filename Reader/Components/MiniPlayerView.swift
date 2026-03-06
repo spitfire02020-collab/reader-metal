@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Mini Player (persistent bottom bar) - Redesigned with Glassmorphism
 
@@ -121,6 +122,7 @@ struct MiniPlayerView: View {
 
     private var playPauseButton: some View {
         Button {
+            playHaptic(.medium)
             audioPlayer.togglePlayPause()
         } label: {
             ZStack {
