@@ -76,7 +76,7 @@ final class ModelDownloadService: NSObject, ObservableObject {
     private var downloadTasks: [URLSessionDownloadTask] = []
     private var urlSession: URLSession!
 
-    private override init() {
+    override init() {
         super.init()
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForResource = 3600 // 1 hour for large models

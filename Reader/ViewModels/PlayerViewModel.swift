@@ -44,9 +44,9 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var cachedAttributedParagraphs: [AttributedString] = []
 
     let audioPlayer: AudioPlayerService
-    private let engine = ChatterboxEngine()
-    private let downloadService = ModelDownloadService.shared
-    private let synthesisDB = SynthesisDatabase.shared
+    private let engine: ChatterboxEngine
+    private let downloadService: ModelDownloadService
+    private let synthesisDB: SynthesisDatabase
 
     /// Total duration - always use estimated full duration, not cumulative chunk duration
     var totalDuration: TimeInterval {
@@ -173,9 +173,19 @@ final class PlayerViewModel: ObservableObject {
     /// Callback when item is updated (e.g., voice selection changed)
     var onItemUpdate: ((LibraryItem) -> Void)?
 
-    @MainActor init(item: LibraryItem, audioPlayer: AudioPlayerService? = nil, onItemUpdate: ((LibraryItem) -> Void)? = nil) {
+    @MainActor init(
+        item: LibraryItem,
+        audioPlayer: AudioPlayerService? = nil,
+        engine: ChatterboxEngine? = nil,
+        downloadService: ModelDownloadService? = nil,
+        synthesisDB: SynthesisDatabase? = nil,
+        onItemUpdate: ((LibraryItem) -> Void)? = nil
+    ) {
         self.item = item
-        self.audioPlayer = audioPlayer ?? AudioPlayerService.shared
+        self.audioPlayer = audioPlayer ?? AudioPlayerService()
+        self.engine = engine ?? ChatterboxEngine()
+        self.downloadService = downloadService ?? ModelDownloadService()
+        self.synthesisDB = synthesisDB ?? SynthesisDatabase()
         self.onItemUpdate = onItemUpdate
 
         // Stop any current playback and cancel synthesis from previous article

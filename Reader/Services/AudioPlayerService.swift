@@ -212,7 +212,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
     /// Database for checking chunk progress
     private let synthesisDB = SynthesisDatabase.shared
 
-    private override init() {
+    override init() {
         super.init()
         setupAudioSession()
         setupRemoteTransportControls()

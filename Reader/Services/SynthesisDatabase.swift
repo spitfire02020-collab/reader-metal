@@ -93,7 +93,7 @@ final class SynthesisDatabase {
     private let chCreatedAt = SQLite.Expression<Double>("created_at")
     private let chUpdatedAt = SQLite.Expression<Double>("updated_at")
 
-    private init() {
+    init() {
         do {
             let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
             let dbPath = documentsPath.appendingPathComponent("synthesis.sqlite3")

@@ -223,7 +223,7 @@ final class TextChunker {
     private static func splitByPunctuation(_ text: String) -> [String] {
         var sentences: [String] = []
         var currentSentence = ""
-        var inQuote = false
+        var quoteDepth = 0  // Track nested quotes properly
 
         let chars = Array(text)
         var i = 0
@@ -232,15 +232,42 @@ final class TextChunker {
             let char = chars[i]
 
             switch char {
-            case "\"", "'":
+            case "\"":
                 currentSentence.append(char)
-                inQuote = !inQuote
+                // Only toggle if not escaped (not preceded by backslash)
+                if i == 0 || chars[i-1] != "\\" {
+                    quoteDepth += 1
+                    if quoteDepth > 1 {
+                        quoteDepth -= 1  // Keep depth at 1 for non-nested quotes
+                    }
+                }
+
+            case "'":
+                // Handle apostrophes separately - only count as quote if:
+                // 1. Surrounded by whitespace (opening/closing quote)
+                // 2. At start/end of word with whitespace on one side
+                let isApostrophe = {
+                    let prevIsWord = i > 0 && chars[i-1].isLetter
+                    let nextIsWord = i + 1 < chars.count && chars[i+1].isLetter
+                    return prevIsWord || nextIsWord
+                }()
+                currentSentence.append(char)
+                if !isApostrophe {
+                    quoteDepth += 1
+                    if quoteDepth > 1 {
+                        quoteDepth -= 1
+                    }
+                }
 
             case ".", "!", "?":
-                // Don't split if adjacent to a quote (either before or after)
-                let prevIsQuote = i > 0 && (chars[i-1] == "\"" || chars[i-1] == "'")
-                let nextIsQuote = i + 1 < chars.count && (chars[i+1] == "\"" || chars[i+1] == "'")
-                if inQuote || prevIsQuote || nextIsQuote {
+                // Check quote context:
+                // - nextIsQuote: punctuation before closing quote → don't split
+                // - quoteDepth > 0: currently inside quotes → don't split
+                // - prevIsQuote but NOT nextIsQuote: punctuation after closing quote → DO split (sentence ended)
+                let nextIsQuote = i + 1 < chars.count && chars[i+1] == "\""
+                let isInsideQuotes = quoteDepth > 0 || nextIsQuote
+
+                if isInsideQuotes {
                     currentSentence.append(char)
                     i += 1
                     continue
