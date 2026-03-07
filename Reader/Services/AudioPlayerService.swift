@@ -197,7 +197,6 @@ final class AudioPlayerService: NSObject, ObservableObject {
     // Current audio buffers
     private var bufferA: AVAudioPCMBuffer?
     private var bufferB: AVAudioPCMBuffer?
-    private var nextChunkBuffer: AVAudioPCMBuffer?  // Pre-loaded next chunk
 
     // Legacy player for non-crossfade mode
     private var audioPlayer: AVAudioPlayer?
@@ -586,11 +585,11 @@ final class AudioPlayerService: NSObject, ObservableObject {
         } else {
             // Additional chunk - append to queue
             audioFiles.append(url)
-            // Update duration
+            // Update duration using AVAudioFile (more efficient than AVAudioPlayer)
             do {
-                let player = try AVAudioPlayer(contentsOf: url)
-                player.prepareToPlay()
-                duration += player.duration
+                let audioFile = try AVAudioFile(forReading: url)
+                let fileDuration = Double(audioFile.length) / audioFile.fileFormat.sampleRate
+                duration += fileDuration
             } catch {
                 audioLogger.error("Failed to get chunk duration: \(error.localizedDescription)")
             }
@@ -653,11 +652,11 @@ final class AudioPlayerService: NSObject, ObservableObject {
         audioFiles.append(url)
         NSLog("[AudioPlayer] appendStreamChunk: appended, total files now: \(audioFiles.count)")
 
-        // Update total duration by calculating duration of new chunk
+        // Update total duration using AVAudioFile (more efficient)
         do {
-            let player = try AVAudioPlayer(contentsOf: url)
-            player.prepareToPlay()
-            duration += player.duration
+            let audioFile = try AVAudioFile(forReading: url)
+            let fileDuration = Double(audioFile.length) / audioFile.fileFormat.sampleRate
+            duration += fileDuration
             NSLog("[AudioPlayer] Updated total duration: \(duration)")
         } catch {
             audioLogger.error("Failed to get chunk duration: \(error.localizedDescription)")

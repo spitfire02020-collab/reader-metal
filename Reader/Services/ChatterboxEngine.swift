@@ -239,8 +239,12 @@ final class ChatterboxEngine: ObservableObject {
     ///   - exaggeration: Expressiveness level (0.25-2.0).
     ///   - cfgWeight: Classifier-free guidance weight (0.2-1.0).
     ///   - speedFactor: Playback speed (0.25-4.0).
+    ///   - preChunkedText: Optional pre-chunked text array. If provided, the engine will use these
+    ///                     exact chunks instead of rechunking the text. This ensures chunk boundaries
+    ///                     match between display and audio.
     func synthesize(
         text: String,
+        preChunkedText: [String]? = nil,
         referenceAudioURL: URL? = nil,
         outputURL: URL,
         onChunkReady: ((URL) -> Void)? = nil,
@@ -272,8 +276,14 @@ final class ChatterboxEngine: ObservableObject {
             srand48(seed)
         }
 
-        // Step 1: Chunk text for streaming - use TextChunker for smart sentence splitting
-        let chunks = TextChunker.chunkText(text)
+        // Step 1: Chunk text for streaming - use preChunkedText if provided, otherwise use TextChunker
+        let chunks: [String]
+        if let preChunked = preChunkedText, !preChunked.isEmpty {
+            chatterboxLogger.info("synthesize: using \(preChunked.count) pre-chunked texts (no rechunking)")
+            chunks = preChunked
+        } else {
+            chunks = TextChunker.chunkText(text)
+        }
         guard !chunks.isEmpty else { throw ChatterboxError.emptyText }
 
         chatterboxLogger.info("synthesize: split into \(chunks.count) chunks for streaming")

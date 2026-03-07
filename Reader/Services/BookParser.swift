@@ -384,6 +384,15 @@ final class BookParser {
             }
 
             let filePath = destination.appendingPathComponent(entry.filename)
+
+            // Security: Validate path stays within destination (prevent path traversal)
+            let resolvedPath = filePath.resolvingSymlinksInPath()
+            let destinationPath = destination.resolvingSymlinksInPath().path
+            guard resolvedPath.path.hasPrefix(destinationPath) else {
+                // Skip suspicious entries that would write outside destination
+                continue
+            }
+
             let dir = filePath.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try fileData.write(to: filePath)

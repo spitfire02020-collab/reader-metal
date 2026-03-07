@@ -33,6 +33,8 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var cachedParagraphSentences: [[String]] = []
     /// Cached paragraph index to sentence start index mapping
     @Published private(set) var sentencesIndicesStart: [Int: Int] = [:]
+    /// Fast O(1) lookup map: text -> index for updatePlayingIndex
+    private var textToIndexMap: [String: Int] = [:]
     /// Flattened sentences for efficient display with index-based highlighting
     /// Each item: (sentenceText, globalSentenceIndex, paragraphIndex)
     @Published private(set) var flattenedSentences: [(text: String, index: Int, paragraphIndex: Int)] = []
@@ -357,6 +359,12 @@ final class PlayerViewModel: ObservableObject {
         flattenedSentences = flattened
         sentencesIndicesStart = indicesMap
 
+        // Build O(1) lookup map for text-to-index
+        textToIndexMap = [:]
+        for (idx, item) in flattened.enumerated() {
+            textToIndexMap[item.text] = idx
+        }
+
         // Build attributed strings (without highlight initially)
         rebuildAttributedStrings()
 
@@ -404,30 +412,10 @@ final class PlayerViewModel: ObservableObject {
         return result
     }
 
-    /// Split text into sentences - used for caching
+    /// Split text into sentences - now uses TextChunker for consistency with audio
     private func splitIntoSentences(_ text: String) -> [String] {
-        var sentences: [String] = []
-        var currentSentence = ""
-        let chars = Array(text)
-
-        for char in chars {
-            currentSentence.append(char)
-
-            if ".?!".contains(char) {
-                let trimmed = currentSentence.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.count > 2 {
-                    sentences.append(trimmed)
-                    currentSentence = ""
-                }
-            }
-        }
-
-        let remaining = currentSentence.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !remaining.isEmpty {
-            sentences.append(remaining)
-        }
-
-        return sentences
+        // Use TextChunker to get consistent sentence boundaries with audio synthesis
+        return TextChunker.chunkText(text)
     }
 
     // MARK: - Playback Control Helpers
@@ -466,28 +454,14 @@ final class PlayerViewModel: ObservableObject {
             return
         }
 
-        // Map chunk index directly to sentence index
-        // Each chunk corresponds to sentences from that chunk's text
+        // Map chunk index directly to sentence index using O(1) lookup
+        // Since both textChunks and flattenedSentences use TextChunker, they should match
         let chunkText = currentChunkIndex < textChunks.count ? textChunks[currentChunkIndex] : ""
 
-        // Find the starting sentence index for this chunk by looking at where this chunk's text appears
-        // Use a more robust matching - find any sentence that starts this chunk
-        var foundIndex = -1
+        // Use O(1) dictionary lookup first
+        var foundIndex = textToIndexMap[chunkText] ?? -1
 
-        // First try exact match
-        if let idx = flattenedSentences.firstIndex(where: { $0.text == chunkText }) {
-            foundIndex = idx
-        } else {
-            // Try to find by partial match - sentence that starts the chunk
-            for (idx, sentence) in flattenedSentences.enumerated() {
-                if chunkText.hasPrefix(sentence.text) || sentence.text.hasPrefix(chunkText.prefix(min(50, sentence.text.count))) {
-                    foundIndex = idx
-                    break
-                }
-            }
-        }
-
-        // Fallback: approximate index based on chunk position
+        // Fallback: approximate index based on chunk position if exact match not found
         if foundIndex < 0 && !flattenedSentences.isEmpty {
             let approximateIndex = Int(Double(currentChunkIndex) / Double(textChunks.count) * Double(flattenedSentences.count))
             foundIndex = min(approximateIndex, flattenedSentences.count - 1)
@@ -557,9 +531,6 @@ final class PlayerViewModel: ObservableObject {
             return
         }
 
-        // Get text from this chunk to end
-        let textFromChunk = textChunks[chunkIndex...].joined(separator: " ")
-
         downloadService.checkModelAvailability()
         guard downloadService.isModelReady else {
             showModelDownload = true
@@ -593,8 +564,12 @@ final class PlayerViewModel: ObservableObject {
             // Pre-generate ALL chunks first to build up a queue
             var allChunkURLs: [URL] = []
 
+            // Pass pre-chunked text to avoid rechunking which can cause boundary mismatches
+            let chunksToSynthesize = Array(textChunks[chunkIndex...])
+
             try await engine.synthesize(
-                text: textFromChunk,
+                text: "",  // Not used when preChunkedText is provided
+                preChunkedText: chunksToSynthesize,
                 referenceAudioURL: refAudioURL,
                 outputURL: outputURL,
                 onChunkReady: { chunkURL in

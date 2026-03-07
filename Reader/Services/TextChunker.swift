@@ -26,8 +26,20 @@ final class TextChunker {
         "[laughs]", "[sighs]", "[gasps]", "[coughs]"
     ]
 
+    // MARK: - Caching
+
+    /// Simple cache for chunkText results to avoid repeated regex processing
+    private static var chunkCache: [String: [String]] = [:]
+    private static let cacheQueue = DispatchQueue(label: "com.reader.textchunker.cache")
+
     /// Split text into chunks - one sentence per chunk
+    /// Result is cached for performance
     static func chunkText(_ text: String) -> [String] {
+        // Check cache first
+        if let cached = cacheQueue.sync(execute: { chunkCache[text] }) {
+            return cached
+        }
+
         let cleaned = cleanText(text)
         guard !cleaned.isEmpty else { return [] }
 
@@ -42,7 +54,12 @@ final class TextChunker {
         let sentencesWithCues = restoreNonVerbalCues(sentences, cuePlaceholders)
 
         // Return each sentence as its own chunk
-        return sentencesWithCues.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let result = sentencesWithCues.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        // Cache the result
+        cacheQueue.async { chunkCache[text] = result }
+
+        return result
     }
 
     // MARK: - Non-verbal Cue Preservation

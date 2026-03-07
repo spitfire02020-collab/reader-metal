@@ -92,8 +92,11 @@ final class LibraryViewModel: ObservableObject {
 
     func addFromURL(_ urlString: String) async {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), url.scheme != nil else {
-            errorMessage = "Please enter a valid URL."
+        // Security: Validate URL scheme is http or https only
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https") else {
+            errorMessage = "Only HTTP and HTTPS URLs are allowed."
             showError = true
             return
         }
