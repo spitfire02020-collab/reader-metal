@@ -34,7 +34,8 @@
 //  │   ├── BookParser.swift          → EPUB/PDF parsing
 //  │   ├── ModelDownloadService.swift→ HuggingFace model download
 //  │   ├── TextChunker.swift         → Text splitting for TTS
-//  │   └── TokenizerService.swift    → GPT-2 BPE tokenizer
+//  │   ├── TokenizerService.swift     → GPT-2 BPE tokenizer
+//  │   └── SynthesisDatabase.swift    → SQLite persistence
 //  ├── ViewModels/
 //  │   ├── LibraryViewModel.swift    → Library state management
 //  │   └── PlayerViewModel.swift     → Player state management
@@ -57,4 +58,32 @@
 //  - GPT-2 BPE tokenizer with emotion tags
 //  - Zero-shot voice cloning from reference audio
 //  - MIT License
+//
+//  CHANGELOG:
+//
+//  2026-03-07: Audio Playback Fixes
+//  - Fixed memory leak in waveform generation (added task cancellation)
+//  - Added error logging to SynthesisDatabase for debugging
+//  - Added debounce to Combine subscription in PlayerViewModel
+//  - Replaced NSLock with Swift Actor in ChatterboxEngine
+//
+//  2026-03-01: Core TTS Fixes
+//  - Fixed wrong tokenizer (onnx-community → ResembleAI Turbo)
+//  - Fixed KV cache layer ordering
+//  - Removed incorrect logit masking
+//  - Added SDK patches for Float16 support
+//
+//  TROUBLESHOOTING:
+//
+//  Q: Audio doesn't play after synthesis?
+//  A: Check console for "HALC_ProxyIOContext" errors - may indicate simulator audio issues
+//
+//  Q: Synthesis is slow?
+//  A: Use iOS device instead of simulator for better performance
+//
+//  Q: Models fail to download?
+//  A: Ensure internet connection; check Settings → Voice Engine Setup
+//
+//  Q: App crashes on long texts?
+//  A: Memory pressure - synthesis creates multiple chunks. Try shorter texts.
 //
