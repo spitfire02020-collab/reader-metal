@@ -4,6 +4,28 @@ import AudioToolbox
 import Accelerate
 import OnnxRuntimeBindings
 import OnnxRuntimeExtensions
+import os.log
+
+// MARK: - Logger
+private let chatterboxLogger = Logger(subsystem: "com.reader.app", category: "ChatterboxEngine")
+
+// MARK: - Thread-Safe Audio Results Collector
+/// Actor for thread-safe collection of audio results from concurrent synthesis tasks
+actor AudioResultsCollector {
+    private var results: [(Int, [Float])] = []
+
+    func append(_ result: (Int, [Float])) {
+        results.append(result)
+    }
+
+    func getSortedResults() -> [(Int, [Float])] {
+        results.sorted { $0.0 < $1.0 }
+    }
+
+    func clear() {
+        results.removeAll()
+    }
+}
 
 // MARK: - Chatterbox TTS Engine
 // On-device text-to-speech using Chatterbox Turbo ONNX models
@@ -100,49 +122,49 @@ final class ChatterboxEngine: ObservableObject {
         // CPU inference is reliable and sufficient for real-time TTS.
         let useCoreML = false
 
-        NSLog("[Chatterbox] loadModels: loading tokenizer")
+        chatterboxLogger.info("loadModels: loading tokenizer")
         try tokenizer.load(from: downloadService.tokenizerPath)
 
-        NSLog("[Chatterbox] loadModels: creating ORT env")
+        chatterboxLogger.info("loadModels: creating ORT env")
         let env = try ORTEnv(loggingLevel: .warning)
         self.ortEnv = env
 
         let sessionOptions = try createSessionOptions(useCoreML: useCoreML)
-        NSLog("[Chatterbox] loadModels: using dynamic models, CoreML: \(useCoreML)")
+        chatterboxLogger.info("loadModels: using dynamic models, CoreML: \(useCoreML)")
 
         // Use dynamic ONNX models
         let modelPathFn: (ModelComponent) -> URL = { [self] in
             self.downloadService.modelPath(for: $0, variant: self.config.modelVariant)
         }
 
-        NSLog("[Chatterbox] loadModels: loading speechEncoder from: \(modelPathFn(.speechEncoder).lastPathComponent)")
+        chatterboxLogger.info("loadModels: loading speechEncoder from: \(modelPathFn(.speechEncoder).lastPathComponent)")
         speechEncoderSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.speechEncoder).path,
             sessionOptions: sessionOptions
         )
-        NSLog("[Chatterbox] loadModels: loading embedTokens from: \(modelPathFn(.embedTokens).lastPathComponent)")
+        chatterboxLogger.info("loadModels: loading embedTokens from: \(modelPathFn(.embedTokens).lastPathComponent)")
         embedTokensSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.embedTokens).path,
             sessionOptions: sessionOptions
         )
-        NSLog("[Chatterbox] loadModels: loading languageModel from: \(modelPathFn(.languageModel).lastPathComponent)")
+        chatterboxLogger.info("loadModels: loading languageModel from: \(modelPathFn(.languageModel).lastPathComponent)")
         languageModelSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.languageModel).path,
             sessionOptions: sessionOptions
         )
-        NSLog("[Chatterbox] loadModels: loading conditionalDecoder from: \(modelPathFn(.conditionalDecoder).lastPathComponent)")
+        chatterboxLogger.info("loadModels: loading conditionalDecoder from: \(modelPathFn(.conditionalDecoder).lastPathComponent)")
         conditionalDecoderSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.conditionalDecoder).path,
             sessionOptions: sessionOptions
         )
-        NSLog("[Chatterbox] loadModels: all models loaded")
+        chatterboxLogger.info("loadModels: all models loaded")
 
         isLoaded = true
-        NSLog("[Chatterbox] loadModels: DONE, isLoaded=\(isLoaded)")
+        chatterboxLogger.info("loadModels: DONE, isLoaded=\(self.isLoaded)")
     }
 
     private func createSessionOptions(useCoreML: Bool = true) throws -> ORTSessionOptions {
@@ -174,12 +196,12 @@ final class ChatterboxEngine: ObservableObject {
                 coremlOptions.enableOnSubgraphs = true
 
                 try options.appendCoreMLExecutionProvider(with: coremlOptions)
-                NSLog("[Chatterbox] CoreML execution provider enabled (GPU/ANE acceleration)")
+                chatterboxLogger.info("CoreML execution provider enabled (GPU/ANE acceleration)")
             } catch {
-                NSLog("[Chatterbox] CoreML not available, using CPU: \(error.localizedDescription)")
+                chatterboxLogger.warning("CoreML not available, using CPU: \(error.localizedDescription)")
             }
         } else {
-            NSLog("[Chatterbox] Using CPU execution provider")
+            chatterboxLogger.info("Using CPU execution provider")
         }
 
         return options
@@ -228,7 +250,7 @@ final class ChatterboxEngine: ObservableObject {
         cfgWeight: Float = 0.5,
         speedFactor: Float = 1.0
     ) async throws {
-        NSLog("[Chatterbox] synthesize() called, onChunkReady=\(onChunkReady != nil)")
+        chatterboxLogger.info("synthesize() called, onChunkReady=\(onChunkReady != nil)")
         guard isLoaded else { throw ChatterboxError.modelNotLoaded }
 
         isSynthesizing = true
@@ -246,7 +268,7 @@ final class ChatterboxEngine: ObservableObject {
 
         // Apply seed for reproducibility
         if seed != 0 {
-            NSLog("[Chatterbox] Setting seed to \(seed) for reproducible generation")
+            chatterboxLogger.info("Setting seed to \(seed) for reproducible generation")
             srand48(seed)
         }
 
@@ -254,7 +276,7 @@ final class ChatterboxEngine: ObservableObject {
         let chunks = TextChunker.chunkText(text)
         guard !chunks.isEmpty else { throw ChatterboxError.emptyText }
 
-        NSLog("[Chatterbox] synthesize: split into \(chunks.count) chunks for streaming")
+        chatterboxLogger.info("synthesize: split into \(chunks.count) chunks for streaming")
 
         // Determine output directory and base name for chunk files
         let stem = outputURL.deletingPathExtension().lastPathComponent
@@ -262,13 +284,13 @@ final class ChatterboxEngine: ObservableObject {
 
         // Step 2: Encode reference voice ONCE for all chunks
         let speakerContext: SpeakerContext
-        NSLog("[Chatterbox] synthesize: encoding speaker voice")
+        chatterboxLogger.info("synthesize: encoding speaker voice")
         if let refURL = referenceAudioURL {
             speakerContext = try await encodeSpeakerVoice(from: refURL)
         } else {
             speakerContext = try await createDefaultSpeakerContext()
         }
-        NSLog("[Chatterbox] synthesize: speaker encoded, processing \(chunks.count) chunk(s)")
+        chatterboxLogger.info("synthesize: speaker encoded, processing \(chunks.count) chunk(s)")
 
         // Step 3: Process chunks in PARALLEL with LIMITED CONCURRENCY
         // Running 173 tasks in parallel causes OOM - use batch size of 4
@@ -278,11 +300,13 @@ final class ChatterboxEngine: ObservableObject {
         let configCopy = generationConfig
         let maxConcurrent = 4  // Limit to prevent OOM
 
-        var audioResults: [(Int, [Float])] = []
+        // Use Actor for thread-safe collection of audio results
+        let audioResultsCollector = AudioResultsCollector()
 
         // Track completed chunks and next expected index for sequential callback ordering
         var completedChunks: [Int: (audio: [Float], url: URL)] = [:]
         var nextExpectedIndex = 0
+        var failedChunks: [(index: Int, text: String)] = []
 
         // Prepare non-empty chunks with their indices
         var chunkTasks: [(index: Int, text: String)] = []
@@ -302,19 +326,19 @@ final class ChatterboxEngine: ObservableObject {
             let endIdx = min(startIdx + maxConcurrent, chunkTasks.count)
             let batch = Array(chunkTasks[startIdx..<endIdx])
 
-            NSLog("[Chatterbox] Processing batch \(batchIdx + 1)/\(totalBatches) with \(batch.count) tasks")
+            chatterboxLogger.info("Processing batch \(batchIdx + 1)/\(totalBatches) with \(batch.count) tasks")
 
             // Process this batch in parallel
             await withTaskGroup(of: (Int, [Float]?).self) { group in
                 for (index, chunkText) in batch {
                     group.addTask { [self] in
-                        NSLog("[Chatterbox] synthesizing chunk \(index+1)/\(chunkCount) (\(chunkText.count) chars)")
+                        chatterboxLogger.info("synthesizing chunk \(index+1)/\(chunkCount) (\(chunkText.count) chars)")
                         do {
                             let audio = try await self.synthesizeChunk(chunkText, speakerContext: speakerCtx, generationConfig: configCopy)
-                            NSLog("[Chatterbox] synthesizeChunk SUCCESS chunk \(index+1), samples: \(audio.count)")
+                            chatterboxLogger.info("synthesizeChunk SUCCESS chunk \(index+1), samples: \(audio.count)")
                             return (index, audio)
                         } catch {
-                            NSLog("[Chatterbox] chunk \(index) FAILED: \(error)")
+                            chatterboxLogger.error("chunk \(index) FAILED: \(error.localizedDescription)")
                             return (index, nil)
                         }
                     }
@@ -327,12 +351,21 @@ final class ChatterboxEngine: ObservableObject {
                         let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(index).wav")
                         do {
                             try writeWAV(samples: audio, to: chunkURL, sampleRate: config.sampleRate)
-                            NSLog("[Chatterbox] Chunk \(index) file written: \(chunkURL.lastPathComponent)")
+                            chatterboxLogger.info("Chunk \(index) file written: \(chunkURL.lastPathComponent)")
 
                             // Store in completedChunks for ordered callback
                             completedChunks[index] = (audio, chunkURL)
+
+                            // Also store in audioResults for final concatenated WAV
+                            await audioResultsCollector.append((index, audio))
                         } catch {
-                            NSLog("[Chatterbox] Failed to write chunk \(index): \(error)")
+                            chatterboxLogger.error("Failed to write chunk \(index): \(error.localizedDescription)")
+                        }
+                    } else {
+                        // Track failed chunk for retry
+                        if let chunkTask = chunkTasks.first(where: { $0.index == index }) {
+                            failedChunks.append(chunkTask)
+                            chatterboxLogger.info("Chunk \(index) queued for retry")
                         }
                     }
                 }
@@ -342,12 +375,57 @@ final class ChatterboxEngine: ObservableObject {
             // This ensures audio plays in correct order even if chunks complete out of order
             while let nextChunk = completedChunks.removeValue(forKey: nextExpectedIndex) {
                 if let onChunkReady = onChunkReady {
-                    NSLog("[Chatterbox] Calling onChunkReady for chunk \(nextExpectedIndex+1)/\(chunkCount) (sequential)")
+                    chatterboxLogger.info("Calling onChunkReady for chunk \(nextExpectedIndex+1)/\(chunkCount) (sequential)")
                     await MainActor.run {
                         onChunkReady(nextChunk.url)
                     }
                 }
                 nextExpectedIndex += 1
+            }
+
+            // Retry failed chunks from this batch (up to 2 retries)
+            let maxRetries = 2
+            var retriesRemaining = maxRetries
+
+            while !failedChunks.isEmpty && retriesRemaining > 0 {
+                chatterboxLogger.info("Retrying \(failedChunks.count) failed chunks (attempt \(maxRetries - retriesRemaining + 1)/\(maxRetries))")
+                let chunksToRetry = failedChunks
+                failedChunks = []
+
+                for chunkTask in chunksToRetry {
+                    do {
+                        let audio = try await self.synthesizeChunk(chunkTask.text, speakerContext: speakerCtx, generationConfig: configCopy)
+                        chatterboxLogger.info("Retry chunk \(chunkTask.index) SUCCESS, samples: \(audio.count)")
+
+                        let chunkURL = audioDir.appendingPathComponent("\(stem)_part\(chunkTask.index).wav")
+                        try writeWAV(samples: audio, to: chunkURL, sampleRate: config.sampleRate)
+
+                        completedChunks[chunkTask.index] = (audio, chunkURL)
+                        await audioResultsCollector.append((chunkTask.index, audio))
+
+                        // Fire callback if this is the next expected chunk
+                        while let nextChunk = completedChunks.removeValue(forKey: nextExpectedIndex) {
+                            if let onChunkReady = onChunkReady {
+                                chatterboxLogger.info("Calling onChunkReady for retry chunk \(nextExpectedIndex+1)")
+                                await MainActor.run {
+                                    onChunkReady(nextChunk.url)
+                                }
+                            }
+                            nextExpectedIndex += 1
+                        }
+                    } catch {
+                        chatterboxLogger.error("Retry chunk \(chunkTask.index) FAILED: \(error.localizedDescription)")
+                        failedChunks.append(chunkTask)
+                    }
+                }
+
+                retriesRemaining -= 1
+            }
+
+            // If still failed after retries, log error
+            if !failedChunks.isEmpty {
+                chatterboxLogger.warning("\(failedChunks.count) chunks still failed after \(maxRetries) retries")
+                failedChunks = []  // Clear to avoid infinite loop
             }
 
             // Update progress after batch completes
@@ -361,7 +439,7 @@ final class ChatterboxEngine: ObservableObject {
         }
 
         // All chunks have been processed
-        NSLog("[Chatterbox] All \(chunks.count) chunks complete - callback fired sequentially")
+        chatterboxLogger.info("All \(chunks.count) chunks complete - callback fired sequentially")
 
         if let onProgress = onProgress {
             await MainActor.run {
@@ -371,7 +449,9 @@ final class ChatterboxEngine: ObservableObject {
 
         // Step 4: Write the final concatenated WAV (used on subsequent opens).
         // Note: individual chunk files were already written in the TaskGroup loop above
-        let allAudioSamples = audioResults.flatMap { $0.1 }
+        // Get sorted results from actor (thread-safe)
+        let sortedResults = await audioResultsCollector.getSortedResults()
+        let allAudioSamples = sortedResults.flatMap { $0.1 }
         try writeWAV(samples: allAudioSamples, to: outputURL, sampleRate: config.sampleRate)
 
         synthesisProgress = 1.0
@@ -415,13 +495,13 @@ final class ChatterboxEngine: ObservableObject {
 
                     // Apply seed for reproducibility
                     if seed != 0 {
-                        NSLog("[Chatterbox] Setting seed to \(seed) for reproducible generation")
+                        chatterboxLogger.info("Setting seed to \(seed) for reproducible generation")
                         srand48(seed)
                     }
 
                     // Chunk text
                     let chunks = TextChunker.chunkText(text)
-                    NSLog("[Chatterbox] synthesizeStream: text length=\(text.count), chunks count=\(chunks.count)")
+                    chatterboxLogger.info("synthesizeStream: text length=\(text.count), chunks count=\(chunks.count)")
                     guard !chunks.isEmpty else {
                         throw ChatterboxError.emptyText
                     }
@@ -469,7 +549,7 @@ final class ChatterboxEngine: ObservableObject {
 
                     continuation.finish()
                 } catch {
-                    NSLog("[Chatterbox] synthesizeStream error: \(error)")
+                    chatterboxLogger.error("synthesizeStream error: \(error.localizedDescription)")
                     continuation.finish(throwing: error)
                 }
             }
@@ -488,14 +568,14 @@ final class ChatterboxEngine: ObservableObject {
     /// falling back to 0.5s of silence if the file is not yet available.
     @MainActor private func createDefaultSpeakerContext() async throws -> SpeakerContext {
         let voicePath = downloadService.defaultVoicePath
-        NSLog("[Chatterbox] createDefaultSpeakerContext: path=\(voicePath.path)")
-        NSLog("[Chatterbox] createDefaultSpeakerContext: exists=\(FileManager.default.fileExists(atPath: voicePath.path))")
+        chatterboxLogger.info("createDefaultSpeakerContext: path=\(voicePath.path)")
+        chatterboxLogger.info("createDefaultSpeakerContext: exists=\(FileManager.default.fileExists(atPath: voicePath.path))")
         if FileManager.default.fileExists(atPath: voicePath.path) {
-            NSLog("[Chatterbox] createDefaultSpeakerContext: loading voice from \(voicePath.path)")
+            chatterboxLogger.info("createDefaultSpeakerContext: loading voice from \(voicePath.path)")
             return try await encodeSpeakerVoice(from: voicePath)
         }
         // Silence fallback — produces lower quality but avoids a crash.
-        NSLog("[Chatterbox] createDefaultSpeakerContext: FILE NOT FOUND, using silence fallback")
+        chatterboxLogger.warning("createDefaultSpeakerContext: FILE NOT FOUND, using silence fallback")
         let silenceSamples = Array(repeating: Float(0), count: config.sampleRate / 2)
         return try encodeSpeakerVoiceFromSamples(silenceSamples)
     }
@@ -559,7 +639,7 @@ final class ChatterboxEngine: ObservableObject {
         // - cfg_weight: controls conditioning influence (0.2-1.0)
         // Formula: factor = exaggeration * (cfg_weight / 0.5) to preserve default behavior
         let combinedFactor = generationConfig.exaggeration * (generationConfig.cfgWeight / 0.5)
-        NSLog("[Chatterbox] Applying combined factor: \(combinedFactor) (exag=\(generationConfig.exaggeration), cfg=\(generationConfig.cfgWeight))")
+        chatterboxLogger.info("Applying combined factor: \(combinedFactor) (exag=\(generationConfig.exaggeration), cfg=\(generationConfig.cfgWeight))")
 
         let scaledAudioFeatures: ORTValue
         if combinedFactor != 1.0 {  // Only scale if not default (0.5 * 1.0 = 0.5)
@@ -575,7 +655,7 @@ final class ChatterboxEngine: ObservableObject {
         let tokenIDs = tokenizer.encode(text)
         guard !tokenIDs.isEmpty else { return [] }
         let textSeqLen = tokenIDs.count
-        NSLog("[Chatterbox] tokenIDs (\(textSeqLen)): \(tokenIDs.prefix(30)) ...")
+        chatterboxLogger.debug("tokenIDs (\(textSeqLen)): \(tokenIDs.prefix(30)) ...")
 
         // ── Step 2: Embed text tokens ──────────────────────────────────────────
         let int64Tokens = tokenIDs.map { Int64($0) }
@@ -608,8 +688,8 @@ final class ChatterboxEngine: ObservableObject {
         // Log element types to catch dtype mismatches before concat
         let afInfo = try speakerContext.audioFeatures.tensorTypeAndShapeInfo()
         let teInfo = try textEmbeddings.tensorTypeAndShapeInfo()
-        NSLog("[Chatterbox] audioFeatures type=\(afInfo.elementType.rawValue) shape=\(afInfo.shape)")
-        NSLog("[Chatterbox] textEmbeddings type=\(teInfo.elementType.rawValue) shape=\(teInfo.shape)")
+        chatterboxLogger.debug("audioFeatures type=\(afInfo.elementType.rawValue) shape=\(afInfo.shape)")
+        chatterboxLogger.debug("textEmbeddings type=\(teInfo.elementType.rawValue) shape=\(teInfo.shape)")
 
         // Use scaled audio features if exaggeration != 0.5
         let audioFeaturesToUse = scaledAudioFeatures
@@ -684,12 +764,12 @@ final class ChatterboxEngine: ObservableObject {
         // Each iteration is wrapped in autoreleasepool so ORT's ObjC-autoreleased
         // tensors (logits, intermediate activations) are freed immediately after
         // each step rather than accumulating for all 400 steps (~23 GB without this).
-        NSLog("[Chatterbox] decode loop start, totalSeqLen=\(totalSeqLen), maxTokens=\(config.maxNewTokens)")
+        chatterboxLogger.debug("decode loop start, totalSeqLen=\(totalSeqLen), maxTokens=\(self.config.maxNewTokens)")
 
         var shouldStopDecoding = false
 
-        for step in 0..<config.maxNewTokens {
-            NSLog("[Chatterbox] decode step \(step): maxToken=\(config.maxNewTokens)")
+        for step in 0..<self.config.maxNewTokens {
+            chatterboxLogger.debug("decode step \(step): maxToken=\(self.config.maxNewTokens)")
 
             var nextStepInputs: [String: ORTValue] = [:]
             var generatedToken = config.stopSpeechToken
@@ -728,13 +808,13 @@ final class ChatterboxEngine: ObservableObject {
 
                 // Log first few tokens for debugging (matches Python output format)
                 if step < 5 || step % 50 == 0 {
-                    NSLog("[Chatterbox] step \(step): tok=\(generatedToken)")
+                    chatterboxLogger.debug("step \(step): tok=\(generatedToken)")
                 }
 
                 // Check for STOP_SPEECH BEFORE adding to speechTokens
                 // Matches Python: speech_tokens = generate_tokens[:, 1:-1] strips START and STOP
                 if generatedToken == config.stopSpeechToken {
-                    NSLog("[Chatterbox] STOP_SPEECH detected at step \(step)")
+                    chatterboxLogger.info("STOP_SPEECH detected at step \(step)")
                     shouldStopDecoding = true
                     // Don't return here - let code flow to line 498 which breaks the loop
                 } else {
@@ -793,7 +873,7 @@ final class ChatterboxEngine: ObservableObject {
         // The turbo model's conditional decoder accepts any token in the 0-6562 range.
         // Matches reference: speech_tokens = generate_tokens[:, 1:-1] (no range filtering).
         let validSpeechTokens = speechTokens
-        NSLog("[Chatterbox] speech tokens: \(speechTokens.count) generated, first 10: \(speechTokens.prefix(10))")
+        chatterboxLogger.debug("speech tokens: \(speechTokens.count) generated, first 10: \(speechTokens.prefix(10))")
 
         // The f0_predictor/condnet uses Conv1d with "valid" (no-padding) convolutions.
         // With kernel_size k and input length N, output length = N - k + 1; if N < k the
@@ -801,7 +881,7 @@ final class ChatterboxEngine: ObservableObject {
         // tokens (~150 ms of audio) avoids this for any reasonable Conv kernel size.
         let minSpeechTokens = 10
         guard validSpeechTokens.count >= minSpeechTokens else {
-            NSLog("[Chatterbox] only \(validSpeechTokens.count) valid tokens (< \(minSpeechTokens) minimum) – returning silence")
+            chatterboxLogger.warning("only \(validSpeechTokens.count) valid tokens (< \(minSpeechTokens) minimum) – returning silence")
             let estimatedSamples = Int(TextChunker.estimateDuration(for: text) * Double(config.sampleRate))
             return Array(repeating: 0, count: max(estimatedSamples, config.sampleRate / 2))
         }
@@ -835,8 +915,8 @@ final class ChatterboxEngine: ObservableObject {
         let featInfo = try speakerContext.features.tensorTypeAndShapeInfo()
         let speechTokInfo = try speechTokenTensor.tensorTypeAndShapeInfo()
         let audioTokInfo = try speakerContext.audioTokens.tensorTypeAndShapeInfo()
-        NSLog("[Chatterbox] decoder input: speechTokens=\(speechTokInfo.shape), embeddings=\(embInfo.shape), features=\(featInfo.shape)")
-        NSLog("[Chatterbox] audioTokens (prompt): \(audioTokInfo.shape)")
+        chatterboxLogger.debug("decoder input: speechTokens=\(speechTokInfo.shape), embeddings=\(embInfo.shape), features=\(featInfo.shape)")
+        chatterboxLogger.debug("audioTokens (prompt): \(audioTokInfo.shape)")
 
         // Pass speaker_features directly to decoder - matching reference implementation exactly
         let decoderInputs: [String: ORTValue] = [
@@ -861,7 +941,7 @@ final class ChatterboxEngine: ObservableObject {
         }
 
         let outInfo = try audioOutput.tensorTypeAndShapeInfo()
-        NSLog("[Chatterbox] decoder output: \(outInfo.shape)")
+        chatterboxLogger.debug("decoder output: \(outInfo.shape)")
 
         var samples = try extractFloatArray(from: audioOutput)
         // Clip to [-1, 1] to prevent distortion — matches Python: np.clip(..., -1.0, 1.0)
@@ -911,7 +991,7 @@ final class ChatterboxEngine: ObservableObject {
         let elementType = aInfo.elementType
         let bytesPerElement: Int = (elementType == .float16) ? 2 : 4
 
-        NSLog("[Chatterbox] concatEmbeddings: a=\(elementType.rawValue) seqA=\(seqA), b=\(bInfo.elementType.rawValue) seqB=\(seqB), dim=\(dim)")
+        chatterboxLogger.debug("concatEmbeddings: a=\(elementType.rawValue) seqA=\(seqA), b=\(bInfo.elementType.rawValue) seqB=\(seqB), dim=\(dim)")
 
         let aData = try a.tensorData() as Data
 
@@ -930,7 +1010,7 @@ final class ChatterboxEngine: ObservableObject {
             } else {
                 bData = bFloats.withUnsafeBytes { Data($0) }
             }
-            NSLog("[Chatterbox] concatEmbeddings: converted b to match a's type")
+            chatterboxLogger.debug("concatEmbeddings: converted b to match a's type")
         }
 
         var combined = Data(capacity: (seqA + seqB) * dim * bytesPerElement)
@@ -978,7 +1058,7 @@ final class ChatterboxEngine: ObservableObject {
         let shape = info.shape
         let elementType = info.elementType
 
-        NSLog("[Chatterbox] scaleAudioFeatures: factor=\(factor), type=\(elementType.rawValue)")
+        chatterboxLogger.debug("scaleAudioFeatures: factor=\(factor), type=\(elementType.rawValue)")
 
         // Extract, scale, and recreate tensor
         if elementType == .float16 {
@@ -1305,7 +1385,7 @@ final class ChatterboxEngine: ObservableObject {
             throw ChatterboxError.audioWriteFailed
         }
 
-        NSLog("[Chatterbox] writeWAV: wrote \(samples.count) samples to \(url.lastPathComponent)")
+        chatterboxLogger.debug("writeWAV: wrote \(samples.count) samples to \(url.lastPathComponent)")
     }
 }
 

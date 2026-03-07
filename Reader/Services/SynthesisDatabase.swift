@@ -155,7 +155,10 @@ final class SynthesisDatabase {
         voiceId: String?,
         settings: SynthesisSettings?
     ) throws {
-        guard let db else { return }
+        guard let db else {
+            NSLog("[SynthesisDB] ERROR: Database not initialized in createItem")
+            return
+        }
 
         let now = Date().timeIntervalSince1970
         let chunkTexts = TextChunker.chunkText(text)
@@ -195,7 +198,10 @@ final class SynthesisDatabase {
 
     /// Get synthesis item by ID
     func getItem(id: String) throws -> SynthesisItemRow? {
-        guard let db else { return nil }
+        guard let db else {
+            NSLog("[SynthesisDB] ERROR: Database not initialized in getItem")
+            return nil
+        }
 
         let query = synthesisItems.filter(siId == id)
         guard let row = try db.pluck(query) else { return nil }
@@ -217,11 +223,17 @@ final class SynthesisDatabase {
         )
     }
 
-    /// Get all synthesis items
-    func getAllItems() throws -> [SynthesisItemRow] {
+    /// Get all synthesis items with optional pagination
+    /// - Parameters:
+    ///   - limit: Maximum number of items to return (default 50)
+    ///   - offset: Number of items to skip (for pagination)
+    /// - Returns: Array of synthesis items
+    func getAllItems(limit: Int = 50, offset: Int = 0) throws -> [SynthesisItemRow] {
         guard let db else { return [] }
 
-        let query = synthesisItems.order(siUpdatedAt.desc)
+        let query = synthesisItems
+            .order(siUpdatedAt.desc)
+            .limit(limit, offset: offset)
         return try db.prepare(query).map { row in
             SynthesisItemRow(
                 id: row[siId],
@@ -239,6 +251,12 @@ final class SynthesisDatabase {
                 updatedAt: Date(timeIntervalSince1970: row[siUpdatedAt])
             )
         }
+    }
+
+    /// Get total count of synthesis items (useful for pagination)
+    func getItemCount() throws -> Int {
+        guard let db else { return 0 }
+        return try db.scalar(synthesisItems.count)
     }
 
     /// Update synthesis item status
@@ -339,7 +357,10 @@ final class SynthesisDatabase {
 
     /// Get all completed chunks for an item (in order)
     func getCompletedChunks(itemId: String) throws -> [ChunkRow] {
-        guard let db else { return [] }
+        guard let db else {
+            NSLog("[SynthesisDB] ERROR: Database not initialized in getCompletedChunks for item: \(itemId)")
+            return []
+        }
 
         let query = chunks
             .filter(chItemId == itemId)
@@ -371,6 +392,27 @@ final class SynthesisDatabase {
             chStatus <- ChunkStatus.inProgress.rawValue,
             chUpdatedAt <- now
         ))
+    }
+
+    /// Get chunk ID by item ID and chunk index
+    func getChunkId(itemId: String, chunkIndex: Int) throws -> Int64? {
+        guard let db else { return nil }
+
+        let query = chunks
+            .filter(chItemId == itemId)
+            .filter(chChunkIndex == chunkIndex)
+
+        guard let row = try db.pluck(query) else { return nil }
+        return row[chId]
+    }
+
+    /// Mark chunk as completed with file path (by item ID and chunk index)
+    func markChunkCompleted(itemId: String, chunkIndex: Int, filePath: String, duration: Double?) throws {
+        guard let chunkId = try getChunkId(itemId: itemId, chunkIndex: chunkIndex) else {
+            NSLog("[SynthesisDB] Warning: Could not find chunk for item \(itemId) index \(chunkIndex)")
+            return
+        }
+        try markChunkCompleted(id: chunkId, filePath: filePath, duration: duration)
     }
 
     /// Mark chunk as completed with file path
@@ -408,7 +450,10 @@ final class SynthesisDatabase {
 
     /// Get overall progress for an item (0.0 - 1.0)
     func getProgress(itemId: String) throws -> Double {
-        guard let db else { return 0 }
+        guard let db else {
+            NSLog("[SynthesisDB] ERROR: Database not initialized in getProgress for item: \(itemId)")
+            return 0
+        }
 
         let total = try db.scalar(chunks.filter(chItemId == itemId).count)
         guard total > 0 else { return 0 }

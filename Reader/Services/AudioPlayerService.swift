@@ -3,6 +3,14 @@ import UIKit
 @preconcurrency import AVFoundation
 import MediaPlayer
 import Combine
+import SQLite
+import os.log
+
+// MARK: - Logging
+
+/// Structured logger for AudioPlayerService
+/// Use os.Logger instead of NSLog for better production debugging with log levels
+private let audioLogger = Logger(subsystem: "com.reader.app", category: "AudioPlayer")
 
 // MARK: - Audio Player Service
 // Handles audio playback with background support, Now Playing info, and controls
@@ -19,9 +27,6 @@ final class AudioPlayerService: NSObject, ObservableObject {
     @Published var playbackRate: Float = 1.0
     @Published var currentChunkIndex: Int = 0
 
-    // Waveform data for visualization
-    @Published var waveformSamples: [Float] = []
-
     /// Check if audio files are loaded and ready for chapter navigation
     var hasAudioFiles: Bool {
         !audioFiles.isEmpty
@@ -35,6 +40,9 @@ final class AudioPlayerService: NSObject, ObservableObject {
     // Flag set by PlayerViewModel when synthesis is still in progress
     // Delegate uses this to decide whether to wait for more chunks
     @Published var isExpectingMoreChunks = false
+
+    /// Current item ID for checking database for chunk progress
+    private var currentItemID: UUID?
 
     // MARK: - Item Queue for Background Playback
 
@@ -56,6 +64,10 @@ final class AudioPlayerService: NSObject, ObservableObject {
         synthesisProgress[itemID] = progress
     }
 
+    // MARK: - Combine Publishers for Notifications
+    /// Combine cancellables for notification observers
+    private var cancellables = Set<AnyCancellable>()
+
     /// Clear synthesis progress for an item (when done)
     func clearSynthesisProgress(_ itemID: UUID) {
         synthesisProgress.removeValue(forKey: itemID)
@@ -73,9 +85,36 @@ final class AudioPlayerService: NSObject, ObservableObject {
         progress = 0
         currentChunkIndex = 0
         isExpectingMoreChunks = false
+        currentItemID = nil
         // Stop any currently playing audio
         audioPlayer?.stop()
         audioPlayer = nil
+    }
+
+    /// Set the current item ID for database tracking
+    func setCurrentItemID(_ id: UUID?) {
+        currentItemID = id
+    }
+
+    /// Get the number of completed chunks from database
+    func getCompletedChunkCount() -> Int {
+        guard let itemID = currentItemID else { return audioFiles.count }
+        do {
+            let completedChunks = try synthesisDB.getCompletedChunks(itemId: itemID.uuidString)
+            return completedChunks.count
+        } catch {
+            return audioFiles.count
+        }
+    }
+
+    /// Get the number of remaining chunks from database
+    func getRemainingChunkCount() -> Int {
+        guard let itemID = currentItemID else { return 0 }
+        do {
+            return try synthesisDB.getRemainingChunks(itemId: itemID.uuidString)
+        } catch {
+            return 0
+        }
     }
 
     /// Clear playback state for an item - called when loading existing chunks
@@ -171,6 +210,9 @@ final class AudioPlayerService: NSObject, ObservableObject {
     private var nowPlayingArtist: String = ""
     private var nowPlayingImage: UIImage?
 
+    /// Database for checking chunk progress
+    private let synthesisDB = SynthesisDatabase.shared
+
     private override init() {
         super.init()
         setupAudioSession()
@@ -245,6 +287,14 @@ final class AudioPlayerService: NSObject, ObservableObject {
             object: AVAudioSession.sharedInstance()
         )
 
+        // Memory warning - release non-essential resources
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMemoryWarning),
+            name: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil
+        )
+
         // Audio route change (headphones disconnected, etc.)
         NotificationCenter.default.addObserver(
             self,
@@ -313,6 +363,17 @@ final class AudioPlayerService: NSObject, ObservableObject {
         }
     }
 
+    /// Handle memory warning - release non-essential resources to free up memory
+    @objc private func handleMemoryWarning() {
+        NSLog("[AudioPlayer] Memory warning received - releasing non-essential resources")
+
+        // Clear audio files to free memory (will be re-synthesized if needed)
+        audioFiles.removeAll()
+
+        // Note: We don't stop playback as that would be a worse user experience
+        NSLog("[AudioPlayer] Memory warning handled - resources released")
+    }
+
     // MARK: - Audio Engine Setup (for crossfade)
 
     private func setupAudioEngine() {
@@ -345,7 +406,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
         do {
             try engine.start()
         } catch {
-            NSLog("[AudioPlayer] Failed to start audio engine: \(error)")
+            audioLogger.error("Failed to start audio engine: \(error.localizedDescription)")
         }
     }
 
@@ -363,7 +424,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
             try file.read(into: buffer)
             return buffer
         } catch {
-            NSLog("[AudioPlayer] Failed to load audio buffer: \(error)")
+            audioLogger.error("Failed to load audio buffer: \(error.localizedDescription)")
             return nil
         }
     }
@@ -501,7 +562,6 @@ final class AudioPlayerService: NSObject, ObservableObject {
             currentTime = 0
             progress = 0
 
-            generateWaveformData(from: url)
             updateNowPlayingInfo()
         } catch {
             print("Failed to load audio: \(error)")
@@ -521,7 +581,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
                 audioPlayer?.prepareToPlay()
                 duration = audioPlayer?.duration ?? 0
             } catch {
-                NSLog("[AudioPlayer] Failed to load chunk: \(error)")
+                audioLogger.error("Failed to load chunk: \(error.localizedDescription)")
             }
         } else {
             // Additional chunk - append to queue
@@ -532,7 +592,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
                 player.prepareToPlay()
                 duration += player.duration
             } catch {
-                NSLog("[AudioPlayer] Failed to get chunk duration: \(error)")
+                audioLogger.error("Failed to get chunk duration: \(error.localizedDescription)")
             }
         }
     }
@@ -577,13 +637,12 @@ final class AudioPlayerService: NSObject, ObservableObject {
             duration    = audioPlayer?.duration ?? 0
             currentTime = 0
             progress    = 0
-            generateWaveformData(from: firstChunkURL)
             updateNowPlayingInfo()
             NSLog("[AudioPlayer] Calling play(), isPlaying will be: \(audioPlayer?.isPlaying ?? false)")
             play()
             NSLog("[AudioPlayer] After play(), isPlaying: \(audioPlayer?.isPlaying ?? false)")
         } catch {
-            NSLog("[AudioPlayer] Failed to start streaming: \(error)")
+            audioLogger.error("Failed to start streaming: \(error.localizedDescription)")
         }
     }
 
@@ -601,24 +660,64 @@ final class AudioPlayerService: NSObject, ObservableObject {
             duration += player.duration
             NSLog("[AudioPlayer] Updated total duration: \(duration)")
         } catch {
-            NSLog("[AudioPlayer] Failed to get chunk duration: \(error)")
+            audioLogger.error("Failed to get chunk duration: \(error.localizedDescription)")
+        }
+    }
+
+    /// Reload completed chunks from database that haven't been loaded yet
+    /// Called during polling to catch chunks generated between delegate callbacks
+    func reloadPendingChunks() {
+        guard let itemID = currentItemID else { return }
+
+        do {
+            let completedChunks = try synthesisDB.getCompletedChunks(itemId: itemID.uuidString)
+            let existingPaths = Set(audioFiles.map { $0.lastPathComponent })
+
+            for chunk in completedChunks {
+                guard let filePath = chunk.filePath else { continue }
+                let chunkURL = URL(fileURLWithPath: filePath)
+
+                // Skip if already loaded
+                guard !existingPaths.contains(chunkURL.lastPathComponent) else { continue }
+
+                NSLog("[AudioPlayer] reloadPendingChunks: loading chunk \(chunk.chunkIndex)")
+                audioFiles.append(chunkURL)
+
+                // Update duration
+                if let player = try? AVAudioPlayer(contentsOf: chunkURL) {
+                    player.prepareToPlay()
+                    duration += player.duration
+                }
+            }
+
+            NSLog("[AudioPlayer] reloadPendingChunks: total loaded: \(audioFiles.count)")
+        } catch {
+            NSLog("[AudioPlayer] reloadPendingChunks: error \(error)")
         }
     }
 
     // MARK: - Playback Controls
 
     func play() {
-        NSLog("[AudioPlayer] play() called, audioPlayer is nil: \(audioPlayer == nil)")
-        audioPlayer?.rate = playbackRate
-        let playResult = audioPlayer?.play()
-        NSLog("[AudioPlayer] play() result: \(String(describing: playResult)), isPlaying: \(audioPlayer?.isPlaying ?? false)")
+        guard let player = audioPlayer else {
+            NSLog("[AudioPlayer] play() FAILED: audioPlayer is nil")
+            return
+        }
+        NSLog("[AudioPlayer] play() called, audioPlayer is nil: false")
+        player.rate = playbackRate
+        let playResult = player.play()
+        NSLog("[AudioPlayer] play() result: \(String(describing: playResult)), isPlaying: \(player.isPlaying)")
         isPlaying = true
         startProgressUpdates()
         updateNowPlayingInfo()
     }
 
     func pause() {
-        audioPlayer?.pause()
+        guard let player = audioPlayer else {
+            NSLog("[AudioPlayer] pause() FAILED: audioPlayer is nil")
+            return
+        }
+        player.pause()
         isPlaying = false
         stopProgressUpdates()
         updateNowPlayingInfo()
@@ -629,8 +728,12 @@ final class AudioPlayerService: NSObject, ObservableObject {
     }
 
     func stop() {
-        audioPlayer?.stop()
-        audioPlayer?.currentTime = 0
+        guard let player = audioPlayer else {
+            NSLog("[AudioPlayer] stop() FAILED: audioPlayer is nil")
+            return
+        }
+        player.stop()
+        player.currentTime = 0
         DispatchQueue.main.async { [weak self] in
             self?.isPlaying = false
             self?.currentTime = 0
@@ -673,6 +776,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
         guard currentChunkIndex + 1 < audioFiles.count else {
             NSLog("[AudioPlayer] nextChapter: NO MORE CHAPTERS, stopping")
             isPlaying = false
+            isExpectingMoreChunks = false  // Reset state
             stopProgressUpdates()
             return
         }
@@ -713,7 +817,6 @@ final class AudioPlayerService: NSObject, ObservableObject {
             currentTime = 0
             progress = 0
 
-            generateWaveformData(from: audioFiles[index])
             updateNowPlayingInfo()
 
             if wasPlaying {
@@ -768,59 +871,6 @@ final class AudioPlayerService: NSObject, ObservableObject {
 
     // MARK: - Waveform Generation
 
-    private func generateWaveformData(from url: URL) {
-        let capturedURL = url
-        Task.detached {
-            do {
-                let file = try AVAudioFile(forReading: capturedURL)
-                let frameCount = AVAudioFrameCount(file.length)
-                let format = file.processingFormat
-                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
-                try file.read(into: buffer)
-
-                guard let channelData = buffer.floatChannelData?[0] else { return }
-
-                let sampleCount = 200 // Number of bars in waveform
-                let samplesPerBar = max(1, Int(frameCount) / sampleCount)
-                var bars: [Float] = []
-
-                for i in 0..<sampleCount {
-                    let start = i * samplesPerBar
-                    let end = min(start + samplesPerBar, Int(frameCount))
-                    guard start < end else {
-                        bars.append(0)
-                        continue
-                    }
-
-                    var maxAmp: Float = 0
-                    for j in start..<end {
-                        let amp = abs(channelData[j])
-                        if amp > maxAmp { maxAmp = amp }
-                    }
-                    bars.append(maxAmp)
-                }
-
-                // Normalize
-                let peak = bars.max() ?? 1
-                let normalizedBars: [Float]
-                if peak > 0 {
-                    normalizedBars = bars.map { $0 / peak }
-                } else {
-                    normalizedBars = bars
-                }
-
-                await MainActor.run { [normalizedBars] in
-                    self.waveformSamples = normalizedBars
-                }
-            } catch {
-                let randomBars: [Float] = (0..<200).map { _ in Float.random(in: 0.1...0.8) }
-                await MainActor.run { [randomBars] in
-                    self.waveformSamples = randomBars
-                }
-            }
-        }
-    }
-
     // MARK: - Formatted Time
 
     var formattedCurrentTime: String { formatTime(currentTime) }
@@ -841,11 +891,16 @@ final class AudioPlayerService: NSObject, ObservableObject {
 
 // MARK: - AVAudioPlayerDelegate
 
+/// Polling configuration for waiting on synthesis chunks
+private enum ChunkPolling {
+    static let maxIterations = 60
+    static let sleepIntervalNs: UInt64 = 500_000_000  // 0.5 seconds
+}
+
 extension AudioPlayerService: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         NSLog("[AudioPlayer] delegate: didFinishPlaying called, flag=\(flag)")
         Task { @MainActor in
-            // Capture current state at the time of delegate callback
             let currentIndex = self.currentChunkIndex
             let totalFiles = self.audioFiles.count
             let expectingMore = self.isExpectingMoreChunks
@@ -865,48 +920,87 @@ extension AudioPlayerService: AVAudioPlayerDelegate {
                 self.nextChapter()
             } else if expectingMore {
                 // No more chunks currently but synthesis is still going
-                // Wait and poll for new chunks
+                // Wait and poll for new chunks by checking the database
                 NSLog("[AudioPlayer] delegate: no more chunks yet, waiting for synthesis...")
                 // Don't set isPlaying = false here! We'll resume playback when next chunk arrives
-                // and loadAndPlayChapter checks wasPlaying
 
-                // Poll for new chunks arriving
-                for pollIteration in 0..<60 { // Wait up to 30 seconds
-                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                // Run polling in background to not block MainActor
+                Task.detached { [weak self] in
+                    guard let self = self else { return }
+                    await self.pollForNewChunks()
+                }
+            }
+        }
+    }
 
-                    let newTotalFiles = self.audioFiles.count
-                    let newExpectingMore = self.isExpectingMoreChunks
-                    let currentNow = self.currentChunkIndex
+    /// Polls for new chunks in background without blocking MainActor
+    private func pollForNewChunks() async {
+        var previousChunkCount = self.getCompletedChunkCount()
 
-                    NSLog("[AudioPlayer] delegate: poll[\(pollIteration)] - totalFiles=\(newTotalFiles) (was \(totalFiles)), expectingMore=\(newExpectingMore), currentChunkIndex=\(currentNow)")
-                    NSLog("[AudioPlayer] delegate: audioFiles now = \(self.audioFiles.map { $0.lastPathComponent })")
+        NSLog("[AudioPlayer] pollForNewChunks: starting background polling")
 
-                    // FIRST: Check if more chunks have arrived (before checking expectingMore)
-                    // This fixes race condition where synthesis completes between delegate call and polling
-                    if newTotalFiles > totalFiles {
-                        // New chunk arrived! Advance to next chapter
-                        NSLog("[AudioPlayer] delegate: new chunk arrived! totalFiles changed \(totalFiles) -> \(newTotalFiles), resuming playback")
+        // Poll for new chunks arriving by checking database
+        for iteration in 0..<ChunkPolling.maxIterations {
+            try? await Task.sleep(nanoseconds: ChunkPolling.sleepIntervalNs)
+
+            let newChunkCount = self.getCompletedChunkCount()
+            let newExpectingMore = self.isExpectingMoreChunks
+
+            NSLog("[AudioPlayer] pollForNewChunks[\(iteration)]: generated=\(newChunkCount), expectingMore=\(newExpectingMore)")
+
+            // Check if new chunks were generated
+            if newChunkCount > previousChunkCount {
+                NSLog("[AudioPlayer] pollForNewChunks: new chunk generated! count \(previousChunkCount) -> \(newChunkCount)")
+                previousChunkCount = newChunkCount
+
+                // Append any newly generated chunks to audio player on MainActor
+                await MainActor.run {
+                    self.reloadPendingChunks()
+
+                    // Check if we can advance to next chapter
+                    if self.currentChunkIndex + 1 < self.audioFiles.count {
+                        NSLog("[AudioPlayer] pollForNewChunks: advancing to next chapter")
                         self.nextChapter()
                         return
                     }
-
-                    // SECOND: Check if synthesis is done - only stop if no more chunks coming
-                    if !newExpectingMore {
-                        // Synthesis finished and no new chunks arrived
-                        NSLog("[AudioPlayer] delegate: breaking - expectingMore=\(newExpectingMore), no more synthesis coming")
-                        break
-                    }
                 }
+                continue
+            }
 
-                // Either synthesis done or timed out
-                self.isPlaying = false
-                self.stopProgressUpdates()
-                NSLog("[AudioPlayer] delegate: Playback complete (after waiting)")
+            // Check if we can advance to next chapter
+            let currentNow = self.currentChunkIndex
+            if currentNow + 1 < self.audioFiles.count {
+                NSLog("[AudioPlayer] pollForNewChunks: advancing to next chapter")
+                await MainActor.run {
+                    self.nextChapter()
+                }
+                return
+            }
+
+            // Synthesis complete - stop waiting
+            if !newExpectingMore {
+                NSLog("[AudioPlayer] pollForNewChunks: synthesis done, no more chunks arriving")
+                break
+            }
+
+            previousChunkCount = newChunkCount
+        }
+
+        // Final check after polling ends
+        let latestChunkCount = self.getCompletedChunkCount()
+        NSLog("[AudioPlayer] pollForNewChunks: final check - generated chunks=\(latestChunkCount)")
+
+        await MainActor.run {
+            // Check if we can advance to next chapter
+            if self.currentChunkIndex + 1 < self.audioFiles.count {
+                NSLog("[AudioPlayer] pollForNewChunks: chunks available, resuming")
+                self.nextChapter()
             } else {
-                // No more chunks and not expecting any
+                // Synthesis done or timed out with no new chunks
                 self.isPlaying = false
+                self.isExpectingMoreChunks = false  // Reset state
                 self.stopProgressUpdates()
-                NSLog("[AudioPlayer] delegate: Playback complete")
+                NSLog("[AudioPlayer] pollForNewChunks: Playback complete (after waiting)")
             }
         }
     }

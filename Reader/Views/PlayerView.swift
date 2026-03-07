@@ -164,7 +164,7 @@ struct PlayerView: View {
                     scrollProxy = proxy
                 }
                 .onChange(of: viewModel.audioPlayer.currentChunkIndex) { _, newIndex in
-                    viewModel.updatePlayingIndex()
+                    // updatePlayingIndex() is already called by Combine subscription in PlayerViewModel
                     // Auto-scroll only when paragraph actually changes
                     if autoScrollEnabled, newIndex >= 0 {
                         let targetParagraph = findParagraphIndex(for: newIndex)
