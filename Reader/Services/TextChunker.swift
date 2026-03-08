@@ -239,11 +239,11 @@ final class TextChunker {
     }
 
     /// Check if remaining text has an even number of quotes (meaning we're outside quotes)
-    private static func isOutsideQuotes(_ text: String, from index: Int) -> Bool {
+    private static func isOutsideQuotes(_ currentSentence: String) -> Bool {
+        // Count quotes in the current sentence being built
         var count = 0
-        for i in index..<text.count {
-            let idx = text.index(text.startIndex, offsetBy: i)
-            if text[idx] == "\"" { count += 1 }
+        for char in currentSentence {
+            if char == "\"" { count += 1 }
         }
         // Even = outside quotes (matched pairs), Odd = inside (unmatched opening)
         return count % 2 == 0
@@ -277,7 +277,7 @@ final class TextChunker {
                 currentSentence.append(char)
 
                 // Don't split if inside quotes
-                if !isOutsideQuotes(text, from: i + 1) {
+                if !isOutsideQuotes(currentSentence) {
                     // Inside quotes - don't split
                     i += 1
                     continue
