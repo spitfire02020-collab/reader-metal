@@ -751,8 +751,21 @@ final class PlayerViewModel: ObservableObject {
         // Check for existing synthesis in database (resume support)
         let itemId = item.id.uuidString
         var isResuming = false
+        var isAlreadyCompleted = false
         if let existingItem = try? synthesisDB.getItem(id: itemId) {
-            if existingItem.status == .paused || existingItem.status == .error || existingItem.status == .cancelled {
+            if existingItem.status == .completed {
+                // Already completed - load chunks and skip synthesis
+                NSLog("[PlayerVM] Synthesis already completed for \(itemId)")
+                isAlreadyCompleted = true
+                // Load completed chunks into memory
+                if let completedChunks = try? synthesisDB.getCompletedChunks(itemId: itemId) {
+                    for chunk in completedChunks {
+                        if let path = chunk.filePath {
+                            item.generatedChunks[chunk.chunkIndex] = path
+                        }
+                    }
+                }
+            } else if existingItem.status == .paused || existingItem.status == .error || existingItem.status == .cancelled {
                 NSLog("[PlayerVM] Resuming synthesis for \(itemId), progress: \(existingItem.completedChunks)/\(existingItem.totalChunks)")
                 isResuming = true
                 // Load completed chunks into memory
@@ -768,6 +781,12 @@ final class PlayerViewModel: ObservableObject {
                 NSLog("[PlayerVM] Found synthesizing item, resuming...")
                 isResuming = true
             }
+        }
+
+        // If already completed, skip synthesis and start playback
+        if isAlreadyCompleted {
+            await playCompletedAudio()
+            return
         }
 
         // Create new synthesis in database if not resuming
@@ -1203,6 +1222,43 @@ final class PlayerViewModel: ObservableObject {
             isStreamingAudio = false
             currentStreamingChunkIndex = -1
         }
+    }
+
+    /// Play already completed audio (skip synthesis)
+    private func playCompletedAudio() async {
+        // Check if we have completed chunks to play
+        guard !item.generatedChunks.isEmpty else {
+            NSLog("[PlayerVM] No completed chunks found, starting fresh synthesis")
+            await startSynthesis()
+            return
+        }
+
+        // Load audio files from disk
+        var audioFiles: [URL] = []
+
+        for i in 0..<textChunks.count {
+            let chunkPath = item.generatedChunks[i]
+            if let path = chunkPath, FileManager.default.fileExists(atPath: path) {
+                audioFiles.append(URL(fileURLWithPath: path))
+            } else {
+                // Missing chunk - fall back to synthesis
+                NSLog("[PlayerVM] Missing chunk \(i), need to synthesize")
+                await startSynthesis()
+                return
+            }
+        }
+
+        // Load into audio player and start playback
+        audioPlayer.loadChapters(
+            urls: audioFiles,
+            title: item.title,
+            artist: item.displayAuthor
+        )
+        audioPlayer.play()
+        isStreamingAudio = true
+
+        isSynthesizing = false
+        NSLog("[PlayerVM] Started playback of completed audio, \(audioFiles.count) chunks")
     }
 
     /// Play only the selected text (legacy behavior)
