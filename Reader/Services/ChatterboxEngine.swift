@@ -41,7 +41,7 @@ struct ChatterboxConfig {
     let numKVHeads: Int = 16
     let headDim: Int = 64
     let maxNewTokens: Int = 1500  // Sufficient for longer sentence chunks
-    let repetitionPenalty: Float = 1.2   // matches reference (ResembleAI/chatterbox-turbo-ONNX README)
+    let repetitionPenalty: Float = 1.5   // Increased to reduce audio repetition
 
     // Generation parameters (matching server API)
     var seed: Int = 0                          // 0 = random, non-zero = reproducible
