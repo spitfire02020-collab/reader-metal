@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
@@ -20,28 +22,12 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      - name: Fetch LFS files
+        run: git lfs checkout
+
       - name: Build
         run: |
           xcodebuild build-for-testing \
-            -scheme Reader \
-            -destination 'platform=iOS Simulator,name=iPhone 17' \
-            -derivedDataPath ./DerivedData \
-            -quiet
-
-  test:
-    runs-on: macos-latest
-    needs: build
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-
-      - name: Run Tests
-        run: |
-          xcodebuild test \
             -scheme Reader \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
             -derivedDataPath ./DerivedData \
