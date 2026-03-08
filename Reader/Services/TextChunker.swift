@@ -238,21 +238,11 @@ final class TextChunker {
         return sentences
     }
 
-    /// Check if remaining text has an even number of quotes (meaning we're outside quotes)
-    private static func isOutsideQuotes(_ currentSentence: String) -> Bool {
-        // Count quotes in the current sentence being built
-        var count = 0
-        for char in currentSentence {
-            if char == "\"" { count += 1 }
-        }
-        // Even = outside quotes (matched pairs), Odd = inside (unmatched opening)
-        return count % 2 == 0
-    }
-
     /// Split text by punctuation marks (. ! ?)
     private static func splitByPunctuation(_ text: String) -> [String] {
         var sentences: [String] = []
         var currentSentence = ""
+        var insideQuotes = false  // Track quote state as we build the sentence
 
         let chars = Array(text)
         var i = 0
@@ -262,6 +252,8 @@ final class TextChunker {
 
             switch char {
             case "\"":
+                // Toggle quote state when we encounter a quote
+                insideQuotes = !insideQuotes
                 currentSentence.append(char)
 
             case "'":
@@ -279,54 +271,50 @@ final class TextChunker {
                 // Check if next non-whitespace char is a closing quote
                 var j = i + 1
                 while j < chars.count && chars[j].isWhitespace { j += 1 }
-                let nextNonSpace = j < chars.count ? chars[j] : nil
+                let nextNonSpace: String.Element? = j < chars.count ? chars[j] : nil
                 let nextIsQuote = nextNonSpace == "\""
 
-                // Check if we're inside quotes
-                let insideQuotes = !isOutsideQuotes(currentSentence)
-
-                // If inside quotes AND next is a quote: this is a closing quote, so SPLIT
-                // If NOT inside quotes AND next is a quote: this is opening quote of next, SPLIT
-                // If inside quotes AND next is NOT a quote: don't split (e.g., "Hello," said he.)
-                // If NOT inside quotes AND next is NOT a quote: normal split
-
-                if insideQuotes && nextIsQuote {
-                    // Closing quote - include it and split
-                    currentSentence.append(chars[j])
-                }
-
-                // Now check if we should split
+                // Don't split if inside quotes without closing quote
                 if insideQuotes && !nextIsQuote {
-                    // Inside quotes without closing quote - don't split
                     i += 1
                     continue
                 }
 
-                // Check for abbreviation (only for period)
-                if char == "." {
-                    let remaining = String(chars[(i+1)...]).prefix(3).lowercased()
-                    let wordEnd = remaining.prefix(while: { $0.isLetter }).lowercased()
+                // Handle closing quote - include it ONLY if we're inside quotes
+                if nextIsQuote && insideQuotes {
+                    currentSentence.append(chars[j])
+                }
 
-                    if abbreviations.contains(wordEnd) || wordEnd.hasSuffix(".") {
-                        i += 1
-                        continue
+                // Check for abbreviation (only for period)
+                // First skip whitespace to find the next word
+                if char == "." {
+                    var k = i + 1
+                    while k < chars.count && chars[k].isWhitespace { k += 1 }
+                    if k < chars.count {
+                        let remaining = String(chars[k...]).prefix(3).lowercased()
+                        let wordEnd = remaining.prefix(while: { $0.isLetter }).lowercased()
+                        // Only consider abbreviation if we actually found letters (not empty)
+                        if !wordEnd.isEmpty && (abbreviations.contains(wordEnd) || wordEnd.hasSuffix(".")) {
+                            i += 1
+                            continue
+                        }
                     }
                 }
 
                 // Skip if followed by lowercase (not end of sentence)
                 if i + 1 < chars.count {
-                    let nextNonSpace = String(chars[(i+1)...]).prefix(while: { $0.isWhitespace }).dropFirst()
-                    if let first = nextNonSpace.first, first.isLowercase {
+                    let remaining = String(chars[(i+1)...])
+                    let afterPunctuation = remaining.prefix(while: { $0.isWhitespace }).dropFirst()
+                    if let first = afterPunctuation.first, first.isLowercase {
                         i += 1
                         continue
                     }
                 }
 
                 // End of sentence - save and move on
-                // Move past punctuation
                 i += 1
-                // If we appended closing quote, move past it too
-                if insideQuotes && nextIsQuote {
+                // Skip closing quote if it was a closing quote (and we included it)
+                if nextIsQuote && insideQuotes {
                     i += 1
                 }
                 // Skip whitespace
@@ -337,6 +325,7 @@ final class TextChunker {
                     sentences.append(currentSentence.trimmingCharacters(in: .whitespacesAndNewlines))
                 }
                 currentSentence = ""
+                insideQuotes = false  // Reset quote state for next sentence
                 continue
 
             default:
