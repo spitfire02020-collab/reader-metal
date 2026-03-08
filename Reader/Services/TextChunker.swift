@@ -242,6 +242,7 @@ final class TextChunker {
     private static func splitByPunctuation(_ text: String) -> [String] {
         var sentences: [String] = []
         var currentSentence = ""
+        var inQuotes = false  // Track if we're inside a quoted section
 
         let chars = Array(text)
         var i = 0
@@ -251,116 +252,66 @@ final class TextChunker {
 
             switch char {
             case "\"":
-                // Determine if this is an opening or closing quote
-                // Opening quote: at start of text, after whitespace, or after punctuation
-                // Closing quote: before whitespace/punctuation or at end of text
-                let isOpeningQuote: Bool
-                if i == 0 {
-                    isOpeningQuote = true
-                } else {
-                    let prevChar = chars[i - 1]
-                    isOpeningQuote = prevChar.isWhitespace || prevChar == "(" || prevChar == "[" || prevChar == "{"
-                }
-
-                // Toggle quote depth: opening quote increases, closing quote decreases
-                // But only if we have actual quote characters on both sides
+                // Toggle quote state
+                inQuotes = !inQuotes
                 currentSentence.append(char)
-
-                // Simple heuristic: if followed by whitespace or punctuation, treat as closing
-                if i + 1 < chars.count {
-                    let nextChar = chars[i + 1]
-                    if nextChar.isWhitespace || nextChar == "." || nextChar == "!" || nextChar == "?" || nextChar == "," || nextChar == ";" || nextChar == ":" {
-                        // This might be a closing quote - don't increment depth
-                    } else if isOpeningQuote {
-                        // Opening quote followed by letter - likely speech start
-                    }
-                }
 
             case "'":
-                // Handle apostrophes separately - only count as quote if:
-                // 1. Surrounded by whitespace (opening/closing quote)
-                // 2. At start/end of word with whitespace on one side
-                let isApostrophe = {
-                    let prevIsWord = i > 0 && chars[i-1].isLetter
-                    let nextIsWord = i + 1 < chars.count && chars[i+1].isLetter
-                    return prevIsWord || nextIsWord
-                }()
+                // Apostrophe - don't treat as quote delimiter for sentence splitting
                 currentSentence.append(char)
-                // Don't treat apostrophes as quote delimiters for sentence splitting
 
             case ".", "!", "?":
-                // Check if punctuation is inside quotes:
-                // Only skip splitting if: quote after punctuation AND no more text after the quote
-                var nextIsClosingQuote = false
-                if i + 1 < chars.count && chars[i+1] == "\"" {
-                    // Check if there's non-whitespace text after the closing quote
-                    let afterQuoteIndex = i + 2
-                    var hasMoreText = false
-                    for j in afterQuoteIndex..<chars.count {
-                        if !chars[j].isWhitespace {
-                            hasMoreText = true
-                            break
-                        }
-                    }
-                    // Only treat as closing quote (don't split) if NO more text follows
-                    if !hasMoreText {
-                        nextIsClosingQuote = true
-                    }
-                }
-
-                if nextIsClosingQuote {
+                // Only end sentence if NOT inside quotes
+                if inQuotes {
+                    // Inside quotes - don't split, just add the character
                     currentSentence.append(char)
-                    i += 1
-                    continue
-                }
+                } else {
+                    // Not inside quotes - check for abbreviation
+                    currentSentence.append(char)
 
-                currentSentence.append(char)
+                    // Check for abbreviation (e.g., "Dr." or "Mr.")
+                    if char == "." {
+                        let remaining = String(chars[(i+1)...]).prefix(3).lowercased()
+                        let wordEnd = remaining.prefix(while: { $0.isLetter }).lowercased()
 
-                // Check for abbreviation (e.g., "Dr." or "Mr.")
-                if char == "." {
-                    // Look at next few chars to check for abbreviation
-                    let remaining = String(chars[(i+1)...]).prefix(3).lowercased()
-                    let wordEnd = remaining.prefix(while: { $0.isLetter }).lowercased()
-
-                    if abbreviations.contains(wordEnd) || wordEnd.hasSuffix(".") {
-                        // Skip - this is an abbreviation
-                        i += 1
-                        continue
-                    }
-                }
-
-                // Skip if followed by lowercase (not end of sentence)
-                if i + 1 < chars.count {
-                    let nextChar = chars[i + 1]
-                    if nextChar.isWhitespace {
-                        // Check if sentence ends with period followed by lowercase
-                        if let lastWord = currentSentence.split(separator: " ").last?.lowercased(),
-                           abbreviations.contains(lastWord.trimmingCharacters(in: CharacterSet(charactersIn: "."))) {
+                        if abbreviations.contains(wordEnd) || wordEnd.hasSuffix(".") {
                             i += 1
                             continue
                         }
                     }
-                }
 
-                // Skip if followed by lowercase letter (not end of sentence)
-                if i + 1 < chars.count {
-                    let nextNonSpace = String(chars[(i+1)...]).prefix(while: { $0.isWhitespace }).dropFirst()
-                    if let first = nextNonSpace.first, first.isLowercase {
-                        i += 1
-                        continue
+                    // Skip if followed by lowercase (not end of sentence)
+                    if i + 1 < chars.count {
+                        let nextChar = chars[i + 1]
+                        if nextChar.isWhitespace {
+                            if let lastWord = currentSentence.split(separator: " ").last?.lowercased(),
+                               abbreviations.contains(lastWord.trimmingCharacters(in: CharacterSet(charactersIn: "."))) {
+                                i += 1
+                                continue
+                            }
+                        }
                     }
-                }
 
-                // End of sentence - capture whitespace and continue
-                i += 1
-                while i < chars.count && chars[i].isWhitespace {
+                    // Skip if followed by lowercase letter (not end of sentence)
+                    if i + 1 < chars.count {
+                        let nextNonSpace = String(chars[(i+1)...]).prefix(while: { $0.isWhitespace }).dropFirst()
+                        if let first = nextNonSpace.first, first.isLowercase {
+                            i += 1
+                            continue
+                        }
+                    }
+
+                    // End of sentence
                     i += 1
+                    while i < chars.count && chars[i].isWhitespace {
+                        i += 1
+                    }
+                    if !currentSentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        sentences.append(currentSentence.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    currentSentence = ""
+                    continue
                 }
-                if !currentSentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    sentences.append(currentSentence.trimmingCharacters(in: .whitespacesAndNewlines))
-                }
-                currentSentence = ""
-                continue
 
             default:
                 currentSentence.append(char)
@@ -382,9 +333,7 @@ final class TextChunker {
         // Filter out single quote characters and other non-sentences
         sentences = sentences.filter { sentence in
             let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Reject if it's just whitespace or very short (less than 2 chars)
             guard trimmed.count >= 2 else { return false }
-            // Reject if it's just a single punctuation character
             let isJustPunctuation = trimmed.rangeOfCharacter(from: CharacterSet.letters) == nil
             return !isJustPunctuation
         }
