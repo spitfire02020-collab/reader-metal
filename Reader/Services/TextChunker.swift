@@ -276,23 +276,28 @@ final class TextChunker {
             case ".", "!", "?":
                 currentSentence.append(char)
 
-                // Check if next non-whitespace char is a closing quote (end of dialogue)
+                // Check if next non-whitespace char is a closing quote
                 var j = i + 1
-                while j < chars.count && chars[j].isWhitespace {
-                    j += 1
-                }
+                while j < chars.count && chars[j].isWhitespace { j += 1 }
                 let nextNonSpace = j < chars.count ? chars[j] : nil
-                let nextIsClosingQuote = nextNonSpace == "\""
-
-                // If next is closing quote, include it in current sentence then split
-                if nextIsClosingQuote {
-                    currentSentence.append(chars[j])
-                    i = j + 1
-                }
+                let nextIsQuote = nextNonSpace == "\""
 
                 // Check if we're inside quotes
-                if !isOutsideQuotes(currentSentence) && !nextIsClosingQuote {
-                    // Inside quotes and next char doesn't close the quote - don't split
+                let insideQuotes = !isOutsideQuotes(currentSentence)
+
+                // If inside quotes AND next is a quote: this is a closing quote, so SPLIT
+                // If NOT inside quotes AND next is a quote: this is opening quote of next, SPLIT
+                // If inside quotes AND next is NOT a quote: don't split (e.g., "Hello," said he.)
+                // If NOT inside quotes AND next is NOT a quote: normal split
+
+                if insideQuotes && nextIsQuote {
+                    // Closing quote - include it and split
+                    currentSentence.append(chars[j])
+                }
+
+                // Now check if we should split
+                if insideQuotes && !nextIsQuote {
+                    // Inside quotes without closing quote - don't split
                     i += 1
                     continue
                 }
@@ -310,17 +315,6 @@ final class TextChunker {
 
                 // Skip if followed by lowercase (not end of sentence)
                 if i + 1 < chars.count {
-                    let nextChar = chars[i + 1]
-                    if nextChar.isWhitespace {
-                        if let lastWord = currentSentence.split(separator: " ").last?.lowercased(),
-                           abbreviations.contains(lastWord.trimmingCharacters(in: CharacterSet(charactersIn: "."))) {
-                            i += 1
-                            continue
-                        }
-                    }
-                }
-
-                if i + 1 < chars.count {
                     let nextNonSpace = String(chars[(i+1)...]).prefix(while: { $0.isWhitespace }).dropFirst()
                     if let first = nextNonSpace.first, first.isLowercase {
                         i += 1
@@ -328,8 +322,14 @@ final class TextChunker {
                     }
                 }
 
-                // End of sentence
+                // End of sentence - save and move on
+                // Move past punctuation
                 i += 1
+                // If we appended closing quote, move past it too
+                if insideQuotes && nextIsQuote {
+                    i += 1
+                }
+                // Skip whitespace
                 while i < chars.count && chars[i].isWhitespace {
                     i += 1
                 }
