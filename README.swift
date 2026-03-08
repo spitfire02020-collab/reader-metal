@@ -9,7 +9,7 @@
 //
 //  2. Add ONNX Runtime Swift Package:
 //     File → Add Package Dependencies → Enter:
-//     https://github.com/nicklama/onnxruntime-swift-package-manager
+//     https://github.com/spitfire02020-collab/onnxruntime-swift-package-manager
 //     Select: onnxruntime-objc
 //
 //  3. (Optional) Add ZIPFoundation for EPUB support on device:

@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -68,26 +68,26 @@
 /* Begin PBXFileReference section */
 		0F12580582B61E83294531E6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		136D276230EFC0D9628C5551 /* VoiceProfileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProfileTests.swift; sourceTree = "<group>"; };
-		1FB2454E6E0AAD2BB632513A /* language_model_q4f16.onnx */ = {isa = PBXFileReference; path = language_model_q4f16.onnx; sourceTree = "<group>"; };
+		1FB2454E6E0AAD2BB632513A /* language_model_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = language_model_q4f16.onnx; sourceTree = "<group>"; };
 		2C81E6F42471465EBDD60823 /* VoiceSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSelectionView.swift; sourceTree = "<group>"; };
 		2F0786B23EDD51A5DD0FAD51 /* PlayerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViewModel.swift; sourceTree = "<group>"; };
-		3D621A5091C51F41DBD73CA2 /* embed_tokens_q4f16.onnx_data */ = {isa = PBXFileReference; path = embed_tokens_q4f16.onnx_data; sourceTree = "<group>"; };
+		3D621A5091C51F41DBD73CA2 /* embed_tokens_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = text; path = embed_tokens_q4f16.onnx_data; sourceTree = "<group>"; };
 		3D7ABAE630EFCCC5AA154642 /* WebContentExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentExtractor.swift; sourceTree = "<group>"; };
 		4A6D8EC036C82852FD4ED0CF /* default_voice.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = default_voice.wav; sourceTree = "<group>"; };
 		4E608B09F90284E5EC2521A7 /* SynthesisDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisDatabase.swift; sourceTree = "<group>"; };
 		582CB386C3F0D50F8551BB9C /* TokenizerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenizerService.swift; sourceTree = "<group>"; };
 		58B56ED5C10DC8E411631EEA /* Jade.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Jade.wav; sourceTree = "<group>"; };
-		66E8C0418C8986DC7F8B6C1E /* embed_tokens_q4f16.onnx */ = {isa = PBXFileReference; path = embed_tokens_q4f16.onnx; sourceTree = "<group>"; };
+		66E8C0418C8986DC7F8B6C1E /* embed_tokens_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = embed_tokens_q4f16.onnx; sourceTree = "<group>"; };
 		68FE5DFA26167FF456F60EA0 /* ReaderTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ReaderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6C7A08DDC8989AC474CA78BF /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		732C67BABB16D2F1FCD95689 /* conditional_decoder_q4f16.onnx_data */ = {isa = PBXFileReference; path = conditional_decoder_q4f16.onnx_data; sourceTree = "<group>"; };
-		7D1BE4C99722DBE37CC537AA /* Reader.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		732C67BABB16D2F1FCD95689 /* conditional_decoder_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx_data; sourceTree = "<group>"; };
+		7D1BE4C99722DBE37CC537AA /* Reader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7F6C5F6D8D708F8417D1B670 /* ONNXGraphFixer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ONNXGraphFixer.swift; sourceTree = "<group>"; };
-		84ABC2FE9AB75FA7BD1DD62B /* speech_encoder_q4f16.onnx */ = {isa = PBXFileReference; path = speech_encoder_q4f16.onnx; sourceTree = "<group>"; };
+		84ABC2FE9AB75FA7BD1DD62B /* speech_encoder_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = speech_encoder_q4f16.onnx; sourceTree = "<group>"; };
 		8B58C303DAE833FB27055370 /* ReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderApp.swift; sourceTree = "<group>"; };
 		8B9DEE2C033CD96D4CCEE412 /* LibraryItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryItem.swift; sourceTree = "<group>"; };
 		8CBF4D0CF7F0F5AD94B1918E /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
-		91D3149D8055DAFC5087012E /* language_model_q4f16.onnx_data */ = {isa = PBXFileReference; path = language_model_q4f16.onnx_data; sourceTree = "<group>"; };
+		91D3149D8055DAFC5087012E /* language_model_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = text; path = language_model_q4f16.onnx_data; sourceTree = "<group>"; };
 		92A3FC5F094E7E271ED14097 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		952EEB2BEF90ABE507E02BF3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		96367034206E129C51F09C14 /* ChatterboxEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatterboxEngine.swift; sourceTree = "<group>"; };
@@ -102,9 +102,9 @@
 		BC6E6E74FA806E8B4D80B03D /* ModelDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadService.swift; sourceTree = "<group>"; };
 		BFCD7FE661A4214FA2CFB3FE /* BookParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookParser.swift; sourceTree = "<group>"; };
 		CDCB6111E879C860BEF6509A /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
-		CE41A9B3A8A24DBAD1D24694 /* speech_encoder_q4f16.onnx_data */ = {isa = PBXFileReference; path = speech_encoder_q4f16.onnx_data; sourceTree = "<group>"; };
+		CE41A9B3A8A24DBAD1D24694 /* speech_encoder_q4f16.onnx_data */ = {isa = PBXFileReference; lastKnownFileType = file; path = speech_encoder_q4f16.onnx_data; sourceTree = "<group>"; };
 		D0C2AB7BF361C2C975E56C61 /* Alexander.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Alexander.wav; sourceTree = "<group>"; };
-		D657E607FBE4A1CE3B0C1E71 /* conditional_decoder_q4f16.onnx */ = {isa = PBXFileReference; path = conditional_decoder_q4f16.onnx; sourceTree = "<group>"; };
+		D657E607FBE4A1CE3B0C1E71 /* conditional_decoder_q4f16.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = conditional_decoder_q4f16.onnx; sourceTree = "<group>"; };
 		D98663CD0EA309BD4EAC21F8 /* Emily.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Emily.wav; sourceTree = "<group>"; };
 		DC9F02CB5D2F8E7A8CA1C44C /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
 		DE3FC4CEAF4D3FE54152DEB6 /* SkeletonLoading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonLoading.swift; sourceTree = "<group>"; };
@@ -337,7 +337,6 @@
 						ProvisioningStyle = Automatic;
 					};
 					4FF2F419C3D2B210459D9DF7 = {
-						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -353,10 +352,9 @@
 			mainGroup = 73CE473A89CFE902C734CE7E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite.swift" */,
+				1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite" */,
 				ECA17F6202608D9C8C4C7A85 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -612,7 +610,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = QRK36XKAV8;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Reader/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -631,7 +629,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = QRK36XKAV8;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = Reader/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -677,7 +675,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite.swift" */ = {
+		1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/stephencelis/SQLite.swift";
 			requirement = {
@@ -708,7 +706,7 @@
 		};
 		FF3B23747E5E0A6C4E73EA85 /* SQLite */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite.swift" */;
+			package = 1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite" */;
 			productName = SQLite;
 		};
 /* End XCSwiftPackageProductDependency section */

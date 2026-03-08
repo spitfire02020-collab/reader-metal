@@ -21,7 +21,14 @@ final class LibraryViewModel: ObservableObject {
 
     private let extractor = WebContentExtractor()
     private let engine = ChatterboxEngine()
-    private let storageKey = "library_items"
+
+    // Secure file storage path - uses iOS Data Protection
+    private var libraryFileURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        // Create directory if needed
+        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        return appSupport.appendingPathComponent("library_protected.json")
+    }
 
     enum ContentFilter: String, CaseIterable {
         case all = "All"
@@ -64,27 +71,51 @@ final class LibraryViewModel: ObservableObject {
 
     // MARK: - Persistence
 
+    /// Load library from secure file storage (protected by iOS Data Protection)
     func loadLibrary() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let decoded = try? JSONDecoder().decode([LibraryItem].self, from: data) {
-            // Sanitize HTML entities in titles that may have been stored before entity decoding was in place
-            // Also reset .processing status to .pending (app was likely killed during generation)
-            items = decoded.map { item in
-                guard item.title.contains("&") || item.status == .processing else { return item }
-                var mutable = item
-                mutable.title = item.title.decodedHTMLEntities
-                // Reset processing status - generation was interrupted
-                if mutable.status == .processing {
-                    mutable.status = .pending
+        do {
+            let data = try Data(contentsOf: libraryFileURL)
+            if let decoded = try? JSONDecoder().decode([LibraryItem].self, from: data) {
+                // Sanitize HTML entities in titles that may have been stored before entity decoding was in place
+                // Also reset .processing status to .pending (app was likely killed during generation)
+                items = decoded.map { item in
+                    guard item.title.contains("&") || item.status == .processing else { return item }
+                    var mutable = item
+                    mutable.title = item.title.decodedHTMLEntities
+                    // Reset processing status - generation was interrupted
+                    if mutable.status == .processing {
+                        mutable.status = .pending
+                    }
+                    return mutable
                 }
-                return mutable
             }
+        } catch {
+            // File doesn't exist or can't be read - that's okay for first run
+            // Fall back to legacy UserDefaults storage for migration
+            loadFromUserDefaultsIfNeeded()
         }
     }
 
+    /// Save library to secure file storage (protected by iOS Data Protection)
     func saveLibrary() {
-        if let data = try? JSONEncoder().encode(items) {
-            UserDefaults.standard.set(data, forKey: storageKey)
+        do {
+            let data = try JSONEncoder().encode(items)
+            try data.write(to: libraryFileURL, options: [.atomic, .completeFileProtection])
+        } catch {
+            NSLog("[LibraryViewModel] Failed to save library: \(error)")
+        }
+    }
+
+    /// Migrate from legacy UserDefaults storage
+    private func loadFromUserDefaultsIfNeeded() {
+        let legacyKey = "library_items"
+        if let data = UserDefaults.standard.data(forKey: legacyKey),
+           let decoded = try? JSONDecoder().decode([LibraryItem].self, from: data) {
+            items = decoded
+            // Migrate to secure storage
+            saveLibrary()
+            // Remove legacy data
+            UserDefaults.standard.removeObject(forKey: legacyKey)
         }
     }
 

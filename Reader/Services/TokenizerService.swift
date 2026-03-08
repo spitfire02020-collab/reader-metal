@@ -104,7 +104,6 @@ final class TokenizerService {
                 guard merge.count == 2 else { continue }
                 bpeRanks[BpePair(first: merge[0], second: merge[1])] = rank
             }
-            NSLog("[Tokenizer] loaded \(bpeRanks.count) BPE merge rules")
         } else if let merges = model["merges"] as? [String] {
             // Fallback for space-separated format
             bpeRanks.reserveCapacity(merges.count)
@@ -113,7 +112,6 @@ final class TokenizerService {
                 guard parts.count == 2 else { continue }
                 bpeRanks[BpePair(first: String(parts[0]), second: String(parts[1]))] = rank
             }
-            NSLog("[Tokenizer] loaded \(bpeRanks.count) BPE merge rules (from string format)")
         }
 
         // Added tokens (special tags like <|endoftext|>, [angry], etc.)

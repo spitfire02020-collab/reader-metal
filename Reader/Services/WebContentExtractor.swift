@@ -46,6 +46,13 @@ final class WebContentExtractor: ObservableObject {
             throw ExtractionError.fetchFailed
         }
 
+        // Security: Validate content-type is HTML
+        let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
+        let isHTML = contentType.contains("text/html") || contentType.contains("application/xhtml+xml")
+        guard isHTML else {
+            throw ExtractionError.invalidContentType
+        }
+
         let encoding = httpResponse.textEncodingName.flatMap { String.Encoding(cfEncoding: $0) } ?? .utf8
         guard let html = String(data: data, encoding: encoding) ?? String(data: data, encoding: .utf8) else {
             throw ExtractionError.decodingFailed
@@ -416,6 +423,7 @@ enum ExtractionError: LocalizedError {
     case decodingFailed
     case noContentFound
     case invalidURL
+    case invalidContentType
 
     var errorDescription: String? {
         switch self {
@@ -423,6 +431,7 @@ enum ExtractionError: LocalizedError {
         case .decodingFailed: return "Failed to decode the page content."
         case .noContentFound: return "No readable content found on the page."
         case .invalidURL: return "The URL is invalid."
+        case .invalidContentType: return "The response is not valid HTML content."
         }
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import MetricKit
 
 // MARK: - Reader App Entry Point
 
@@ -8,6 +9,8 @@ struct ReaderApp: App {
 
     init() {
         configureAppearance()
+        // MetricKit automatically collects crash reports on iOS 14+
+        // View crash reports in Xcode Organizer → Crashes
     }
 
     var body: some Scene {

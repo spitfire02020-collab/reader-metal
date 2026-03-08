@@ -140,9 +140,15 @@ final class SynthesisDatabase {
             t.foreignKey(chItemId, references: synthesisItems, siId, delete: .cascade)
         })
 
-        // Indexes
+        // Indexes - single column
         try db?.run(chunks.createIndex(chItemId, ifNotExists: true))
         try db?.run(chunks.createIndex(chStatus, ifNotExists: true))
+
+        // Composite indexes for common query patterns
+        // Query: filter(chItemId == itemId && chChunkIndex >= fromIndex)
+        try db?.run(chunks.createIndex(chItemId, chChunkIndex, ifNotExists: true))
+        // Query: filter(chItemId == itemId && chStatus == completed)
+        try db?.run(chunks.createIndex(chItemId, chStatus, ifNotExists: true))
     }
 
     // MARK: - Synthesis Item Operations
