@@ -5,15 +5,8 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var downloadService: ModelDownloadService
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "has_completed_onboarding")
-    @State private var launchStartTime: Date?
 
     var body: some View {
-        let _ = Self._printChanges()  // Debug: track view recomputations
-        let _ = {
-            if launchStartTime == nil {
-                launchStartTime = Date()
-            }
-        }()
         ZStack {
             LibraryView()
 
