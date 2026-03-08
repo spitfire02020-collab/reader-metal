@@ -24,9 +24,10 @@ project.xcworkspace/
 *.zip
 # Allow voice samples in ChatterboxModels
 !Reader/Resources/ChatterboxModels/*.wav
+# Allow ONNX model data files (required for Xcode 16.4+ builds)
+!Reader/Resources/ChatterboxModels/*.onnx
+!Reader/Resources/ChatterboxModels/*.onnx_data
 *.mp3
-# Ignore model weights (too large for GitHub)
-Reader/Resources/ChatterboxModels/*.onnx_data
 
 # Python
 __pycache__/
