@@ -238,11 +238,21 @@ final class TextChunker {
         return sentences
     }
 
+    /// Check if remaining text has an even number of quotes (meaning we're outside quotes)
+    private static func isOutsideQuotes(_ text: String, from index: Int) -> Bool {
+        var count = 0
+        for i in index..<text.count {
+            let idx = text.index(text.startIndex, offsetBy: i)
+            if text[idx] == "\"" { count += 1 }
+        }
+        // Even = outside quotes (matched pairs), Odd = inside (unmatched opening)
+        return count % 2 == 0
+    }
+
     /// Split text by punctuation marks (. ! ?)
     private static func splitByPunctuation(_ text: String) -> [String] {
         var sentences: [String] = []
         var currentSentence = ""
-        var inQuotes = false  // Track if we're inside a quoted section
 
         let chars = Array(text)
         var i = 0
@@ -252,66 +262,64 @@ final class TextChunker {
 
             switch char {
             case "\"":
-                // Toggle quote state
-                inQuotes = !inQuotes
                 currentSentence.append(char)
 
             case "'":
-                // Apostrophe - don't treat as quote delimiter for sentence splitting
                 currentSentence.append(char)
 
-            case ".", "!", "?":
-                // Only end sentence if NOT inside quotes
-                if inQuotes {
-                    // Inside quotes - don't split, just add the character
-                    currentSentence.append(char)
-                } else {
-                    // Not inside quotes - check for abbreviation
-                    currentSentence.append(char)
+            case ",", ".", "!", "?":
+                currentSentence.append(char)
 
-                    // Check for abbreviation (e.g., "Dr." or "Mr.")
-                    if char == "." {
-                        let remaining = String(chars[(i+1)...]).prefix(3).lowercased()
-                        let wordEnd = remaining.prefix(while: { $0.isLetter }).lowercased()
-
-                        if abbreviations.contains(wordEnd) || wordEnd.hasSuffix(".") {
-                            i += 1
-                            continue
-                        }
-                    }
-
-                    // Skip if followed by lowercase (not end of sentence)
-                    if i + 1 < chars.count {
-                        let nextChar = chars[i + 1]
-                        if nextChar.isWhitespace {
-                            if let lastWord = currentSentence.split(separator: " ").last?.lowercased(),
-                               abbreviations.contains(lastWord.trimmingCharacters(in: CharacterSet(charactersIn: "."))) {
-                                i += 1
-                                continue
-                            }
-                        }
-                    }
-
-                    // Skip if followed by lowercase letter (not end of sentence)
-                    if i + 1 < chars.count {
-                        let nextNonSpace = String(chars[(i+1)...]).prefix(while: { $0.isWhitespace }).dropFirst()
-                        if let first = nextNonSpace.first, first.isLowercase {
-                            i += 1
-                            continue
-                        }
-                    }
-
-                    // End of sentence
-                    i += 1
-                    while i < chars.count && chars[i].isWhitespace {
+                // For commas: don't split if inside quotes (check remaining text)
+                if char == "," {
+                    if !isOutsideQuotes(text, from: i + 1) {
+                        // Inside quotes - don't split at comma
                         i += 1
+                        continue
                     }
-                    if !currentSentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        sentences.append(currentSentence.trimmingCharacters(in: .whitespacesAndNewlines))
-                    }
-                    currentSentence = ""
-                    continue
                 }
+
+                // Check for abbreviation (only for period)
+                if char == "." {
+                    let remaining = String(chars[(i+1)...]).prefix(3).lowercased()
+                    let wordEnd = remaining.prefix(while: { $0.isLetter }).lowercased()
+
+                    if abbreviations.contains(wordEnd) || wordEnd.hasSuffix(".") {
+                        i += 1
+                        continue
+                    }
+                }
+
+                // Skip if followed by lowercase (not end of sentence)
+                if i + 1 < chars.count {
+                    let nextChar = chars[i + 1]
+                    if nextChar.isWhitespace {
+                        if let lastWord = currentSentence.split(separator: " ").last?.lowercased(),
+                           abbreviations.contains(lastWord.trimmingCharacters(in: CharacterSet(charactersIn: "."))) {
+                            i += 1
+                            continue
+                        }
+                    }
+                }
+
+                if i + 1 < chars.count {
+                    let nextNonSpace = String(chars[(i+1)...]).prefix(while: { $0.isWhitespace }).dropFirst()
+                    if let first = nextNonSpace.first, first.isLowercase {
+                        i += 1
+                        continue
+                    }
+                }
+
+                // End of sentence
+                i += 1
+                while i < chars.count && chars[i].isWhitespace {
+                    i += 1
+                }
+                if !currentSentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    sentences.append(currentSentence.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                currentSentence = ""
+                continue
 
             default:
                 currentSentence.append(char)

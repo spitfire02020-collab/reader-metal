@@ -98,4 +98,33 @@ final class TextChunkerTests: XCTestCase {
         let result = TextChunker.chunkText("She said \"He replied 'Hello'\" and smiled.")
         XCTAssertFalse(result.isEmpty)
     }
+
+    // MARK: - Dialogue Handling
+
+    func testDialogueNotSplitByCommaInQuotes() {
+        // This is the key test - dialogue with comma inside quotes should NOT be split
+        let result = TextChunker.chunkText("\"This plan is stupid,\" Witch said. \"The garrison has to mobilize.\"")
+        // Should be 1 sentence, not split at the comma inside quotes
+        XCTAssertEqual(result.count, 1, "Dialogue with commas inside quotes should not be split")
+    }
+
+    func testDialogueWithMultipleQuotes() {
+        let result = TextChunker.chunkText("\"First quote.\" \"Second quote.\" Then normal text.")
+        XCTAssertEqual(result.count, 3)
+    }
+
+    func testDialogueWithQuestionMark() {
+        let result = TextChunker.chunkText("\"Why not?\" she asked. \"Because it's dangerous.\"")
+        XCTAssertEqual(result.count, 2)
+    }
+
+    func testDialogueWithExclamationMark() {
+        let result = TextChunker.chunkText("\"Watch out!\" he shouted. \"It's falling!\"")
+        XCTAssertEqual(result.count, 2)
+    }
+
+    func testMixedDialogueAndNarrative() {
+        let result = TextChunker.chunkText("\"Hello,\" said John. He walked away. Then she replied \"Hi!\"")
+        XCTAssertEqual(result.count, 3)
+    }
 }
