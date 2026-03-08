@@ -640,7 +640,7 @@ struct PlayerView: View {
         NavigationStack {
             SelectableTextView(
                 text: viewModel.item.textContent,
-                chunks: viewModel.paragraphs,
+                chunks: viewModel.textChunks,
                 selectedText: $selectedText,
                 onPlaySelection: {
                     isPlayingSelection = true
