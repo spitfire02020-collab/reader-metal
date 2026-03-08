@@ -829,7 +829,39 @@ final class PlayerViewModel: ObservableObject {
                 refAudioURL = URL(fileURLWithPath: path)
             }
 
-            NSLog("[PlayerVM] Starting synthesizeStream, text length: \(item.textContent.count)")
+            // Skip already completed chunks - filter text to only include missing chunks
+            var chunksToSynthesize: [String] = []
+            let allChunks = TextChunker.chunkText(item.textContent)
+
+            for (index, chunk) in allChunks.enumerated() {
+                if let existingPath = item.generatedChunks[index],
+                   FileManager.default.fileExists(atPath: existingPath) {
+                    // Chunk already exists, skip it
+                    continue
+                }
+                chunksToSynthesize.append(chunk)
+            }
+
+            // If all chunks exist, skip synthesis
+            if chunksToSynthesize.isEmpty && !item.generatedChunks.isEmpty {
+                NSLog("[PlayerVM] All chunks already exist, skipping synthesis")
+                await playCompletedAudio()
+                return
+            }
+
+            // Load existing completed chunks into audio player for immediate playback
+            var existingChunkURLs: [URL] = []
+            for i in 0..<allChunks.count {
+                if let path = item.generatedChunks[i], FileManager.default.fileExists(atPath: path) {
+                    existingChunkURLs.append(URL(fileURLWithPath: path))
+                }
+            }
+            if !existingChunkURLs.isEmpty {
+                audioPlayer.loadChapters(urls: existingChunkURLs, title: item.title, artist: item.displayAuthor)
+                NSLog("[PlayerVM] Loaded \(existingChunkURLs.count) existing chunks for playback")
+            }
+
+            NSLog("[PlayerVM] Starting synthesizeStream, text length: \(item.textContent.count), chunks to synthesize: \(chunksToSynthesize.count)/\(allChunks.count)")
             // Use callback-based synthesis instead of broken AsyncThrowingStream
             // The stream has Swift concurrency issues with @MainActor
             // Wrap in Task.detached to run ONNX inference off main thread to prevent UI freeze
@@ -854,8 +886,11 @@ final class PlayerViewModel: ObservableObject {
                 let engine = self.engine
                 let audioPlayer = self.audioPlayer
 
+                // Use preChunkedText to only synthesize missing chunks
+                let missingChunks = chunksToSynthesize
                 try await engine.synthesize(
-                    text: itemTextContent,
+                    text: "",  // Not used when preChunkedText provided
+                    preChunkedText: missingChunks,
                     referenceAudioURL: refAudioURL,
                     outputURL: outputURL,
                     onChunkReady: { [weak self] chunkURL in
