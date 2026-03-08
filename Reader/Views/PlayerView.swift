@@ -323,16 +323,11 @@ struct PlayerView: View {
                 // Status text
                 HStack {
                     if viewModel.isSynthesizing {
-                        HStack(spacing: 6) {
-                            AnimatedWaveformView(barCount: 12, accentColor: Color.appAccent)
-                                .frame(width: 40, height: 16)
-
-                            // Progress percentage with glow effect
-                            Text("\(Int(viewModel.synthesisProgress * 100))%")
-                                .font(AppTypography.mono)
-                                .foregroundStyle(Color.appAccent)
-                                .shadow(color: Color.appAccent.opacity(0.5), radius: 4)
-                        }
+                        // Progress percentage with glow effect
+                        Text("\(Int(viewModel.synthesisProgress * 100))%")
+                            .font(AppTypography.mono)
+                            .foregroundStyle(Color.appAccent)
+                            .shadow(color: Color.appAccent.opacity(0.5), radius: 4)
                     } else if viewModel.audioPlayer.isPlaying {
                         HStack(spacing: 6) {
                             Image(systemName: "speaker.wave.2.fill")
