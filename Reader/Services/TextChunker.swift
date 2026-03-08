@@ -270,10 +270,10 @@ final class TextChunker {
             case ",", ".", "!", "?":
                 currentSentence.append(char)
 
-                // For commas: don't split if inside quotes (check remaining text)
-                if char == "," {
+                // For commas, question marks, exclamation marks: don't split if inside quotes
+                if char == "," || char == "?" || char == "!" {
                     if !isOutsideQuotes(text, from: i + 1) {
-                        // Inside quotes - don't split at comma
+                        // Inside quotes - don't split
                         i += 1
                         continue
                     }
