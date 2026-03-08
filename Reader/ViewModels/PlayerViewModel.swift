@@ -357,35 +357,62 @@ final class PlayerViewModel: ObservableObject {
 
         NSLog("[PlayerVM] cacheTextData: paragraphs count \(cachedParagraphs.count)")
 
-        // Cache sentence splits for each paragraph
-        cachedParagraphSentences = cachedParagraphs.map { paragraph in
-            splitIntoSentences(paragraph)
+        // CRITICAL FIX: Use TextChunker for BOTH textChunks AND flattenedSentences
+        // This ensures they are 1:1 aligned for accurate index mapping
+        let chunks = TextChunker.chunkText(item.textContent)
+        cachedTextChunks = chunks
+
+        // Build flattenedSentences from the SAME chunks with paragraph tracking
+        var flattened: [(text: String, index: Int, paragraphIndex: Int)] = []
+        var currentPara = 0
+        var paraStartIndex = 0
+
+        // Split text by paragraphs to assign paragraph indices
+        let paragraphTexts = cachedParagraphs.map { $0.trimmingCharacters(in: .whitespaces) }
+
+        for chunk in chunks {
+            // Find which paragraph this chunk belongs to
+            var foundPara = currentPara
+            var found = false
+            for (pi, paraText) in paragraphTexts.enumerated() {
+                if paraText.isEmpty { continue }
+                if chunk.contains(paraText) || paraText.contains(chunk.trimmingCharacters(in: .whitespaces).prefix(30)) {
+                    foundPara = pi
+                    found = true
+                    break
+                }
+            }
+
+            // If we moved to a new paragraph, record the start index
+            if foundPara > currentPara {
+                sentencesIndicesStart[currentPara] = paraStartIndex
+                paraStartIndex = flattened.count
+                currentPara = foundPara
+            }
+
+            flattened.append((text: chunk, index: flattened.count, paragraphIndex: currentPara))
         }
 
-        // Build flattened list for efficient display AND cache indices mapping
-        var flattened: [(text: String, index: Int, paragraphIndex: Int)] = []
-        var indicesMap: [Int: Int] = [:]
-        var globalIndex = 0
-        for (paragraphIndex, sentences) in cachedParagraphSentences.enumerated() {
-            indicesMap[paragraphIndex] = globalIndex
-            for sentence in sentences {
-                flattened.append((text: sentence, index: globalIndex, paragraphIndex: paragraphIndex))
-                globalIndex += 1
-            }
-        }
+        // Record last paragraph start
+        sentencesIndicesStart[currentPara] = paraStartIndex
+
         flattenedSentences = flattened
-        sentencesIndicesStart = indicesMap
+
+        // Build cachedParagraphSentences grouped by paragraph
+        cachedParagraphSentences = cachedParagraphs.enumerated().map { idx, _ in
+            flattened.filter { $0.paragraphIndex == idx }.map { $0.text }
+        }
 
         // Build O(1) lookup map for text-to-index
         textToIndexMap = [:]
-        for (idx, item) in flattened.enumerated() {
-            textToIndexMap[item.text] = idx
+        for (idx, chunk) in chunks.enumerated() {
+            textToIndexMap[chunk] = idx
         }
 
         // Build attributed strings (without highlight initially)
         rebuildAttributedStrings()
 
-        NSLog("[PlayerVM] cacheTextData: done, total sentences \(flattenedSentences.count)")
+        NSLog("[PlayerVM] cacheTextData: done, textChunks=\(cachedTextChunks.count), flattenedSentences=\(flattenedSentences.count)")
     }
 
     /// Build attributed strings for all paragraphs with current highlight
