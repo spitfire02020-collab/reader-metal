@@ -188,6 +188,13 @@ final class PlayerViewModel: ObservableObject {
         self.synthesisDB = synthesisDB ?? SynthesisDatabase()
         self.onItemUpdate = onItemUpdate
 
+        // Set up callback for syncing text highlight when playback starts
+        self.audioPlayer.onChunkPlaybackStarted = { [weak self] chunkIndex in
+            Task { @MainActor in
+                self?.updatePlayingIndex()
+            }
+        }
+
         // Stop any current playback and cancel synthesis from previous article
         // Use Task to defer to avoid "Publishing changes from within view updates" error
         Task { @MainActor in
@@ -464,20 +471,11 @@ final class PlayerViewModel: ObservableObject {
             return
         }
 
-        // Map chunk index directly to sentence index using O(1) lookup
-        // Since both textChunks and flattenedSentences use TextChunker, they should match
-        let chunkText = currentChunkIndex < textChunks.count ? textChunks[currentChunkIndex] : ""
+        // Direct index mapping: chunk index maps directly to sentence index
+        // Both textChunks and flattenedSentences use TextChunker.chunkText(), so they're 1:1 aligned
+        let foundIndex = currentChunkIndex
 
-        // Use O(1) dictionary lookup first
-        var foundIndex = textToIndexMap[chunkText] ?? -1
-
-        // Fallback: approximate index based on chunk position if exact match not found
-        if foundIndex < 0 && !flattenedSentences.isEmpty {
-            let approximateIndex = Int(Double(currentChunkIndex) / Double(textChunks.count) * Double(flattenedSentences.count))
-            foundIndex = min(approximateIndex, flattenedSentences.count - 1)
-        }
-
-        if foundIndex >= 0 && foundIndex != previousIndex {
+        if foundIndex >= 0 && foundIndex != previousIndex && foundIndex < flattenedSentences.count {
             currentPlayingIndex = foundIndex
             rebuildAttributedStrings()
         }
@@ -657,8 +655,13 @@ final class PlayerViewModel: ObservableObject {
             // Resume - update DB status
             try? synthesisDB.updateItemStatus(id: item.id.uuidString, status: SynthesisItemStatus.synthesizing)
         } else {
-            // Pause - update DB status
+            // Pause - cancel synthesis and update DB status
+            synthesisTask?.cancel()
+            synthesisTask = nil
+            audioPlayer.isExpectingMoreChunks = false
             try? synthesisDB.updateItemStatus(id: item.id.uuidString, status: SynthesisItemStatus.paused)
+            isSynthesizing = false
+            isStreamingAudio = false
         }
         isPaused.toggle()
     }
@@ -818,8 +821,14 @@ final class PlayerViewModel: ObservableObject {
                         if let partRange = filename.range(of: "_part") {
                             let indexStr = String(filename[partRange.upperBound...])
                             if let chunkIndex = Int(indexStr) {
-                                // Track in database (wrap in Task for MainActor isolation)
+                                // Mark chunk as completed in database and update progress
                                 Task { @MainActor in
+                                    try? self.synthesisDB.markChunkCompleted(
+                                        itemId: itemId,
+                                        chunkIndex: chunkIndex,
+                                        filePath: chunkURL.path,
+                                        duration: nil
+                                    )
                                     try? self.synthesisDB.updateItemProgress(id: itemId)
                                     if let progress = try? self.synthesisDB.getProgress(itemId: itemId) {
                                         self.synthesisProgress = progress

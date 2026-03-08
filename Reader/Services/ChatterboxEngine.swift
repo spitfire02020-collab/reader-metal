@@ -40,7 +40,7 @@ struct ChatterboxConfig {
     let silenceToken: Int = 4299
     let numKVHeads: Int = 16
     let headDim: Int = 64
-    let maxNewTokens: Int = 500  // Reduced for faster chunk synthesis
+    let maxNewTokens: Int = 1500  // Sufficient for longer sentence chunks
     let repetitionPenalty: Float = 1.2   // matches reference (ResembleAI/chatterbox-turbo-ONNX README)
 
     // Generation parameters (matching server API)

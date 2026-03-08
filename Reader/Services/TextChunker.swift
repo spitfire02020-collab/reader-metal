@@ -28,9 +28,24 @@ final class TextChunker {
 
     // MARK: - Caching
 
+    /// Maximum number of entries in the cache to prevent unbounded memory growth
+    private static let maxCacheEntries = 100
+
     /// Simple cache for chunkText results to avoid repeated regex processing
     private static var chunkCache: [String: [String]] = [:]
-    private static let cacheQueue = DispatchQueue(label: "com.reader.textchunker.cache")
+    private static let cacheQueue = DispatchQueue(label: "com.reader.textchunker.cache", attributes: .concurrent)
+
+    /// Evict oldest entries when cache exceeds max size (simple LRU approximation)
+    /// Must be called within cacheQueue
+    private static func evictCacheIfNeeded() {
+        if chunkCache.count >= maxCacheEntries {
+            // Remove oldest 20% of entries (approximation - dict order is insertion-order in modern Swift)
+            let keysToRemove = Array(chunkCache.keys.prefix(maxCacheEntries / 5))
+            for key in keysToRemove {
+                chunkCache.removeValue(forKey: key)
+            }
+        }
+    }
 
     /// Split text into chunks - one sentence per chunk
     /// Result is cached for performance
@@ -57,7 +72,11 @@ final class TextChunker {
         let result = sentencesWithCues.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
         // Cache the result
-        cacheQueue.async { chunkCache[text] = result }
+        // Use barrier for thread-safe write
+        cacheQueue.async(flags: .barrier) {
+            evictCacheIfNeeded()
+            chunkCache[text] = result
+        }
 
         return result
     }
@@ -223,7 +242,6 @@ final class TextChunker {
     private static func splitByPunctuation(_ text: String) -> [String] {
         var sentences: [String] = []
         var currentSentence = ""
-        var quoteDepth = 0  // Track nested quotes properly
 
         let chars = Array(text)
         var i = 0
@@ -233,12 +251,28 @@ final class TextChunker {
 
             switch char {
             case "\"":
+                // Determine if this is an opening or closing quote
+                // Opening quote: at start of text, after whitespace, or after punctuation
+                // Closing quote: before whitespace/punctuation or at end of text
+                let isOpeningQuote: Bool
+                if i == 0 {
+                    isOpeningQuote = true
+                } else {
+                    let prevChar = chars[i - 1]
+                    isOpeningQuote = prevChar.isWhitespace || prevChar == "(" || prevChar == "[" || prevChar == "{"
+                }
+
+                // Toggle quote depth: opening quote increases, closing quote decreases
+                // But only if we have actual quote characters on both sides
                 currentSentence.append(char)
-                // Only toggle if not escaped (not preceded by backslash)
-                if i == 0 || chars[i-1] != "\\" {
-                    quoteDepth += 1
-                    if quoteDepth > 1 {
-                        quoteDepth -= 1  // Keep depth at 1 for non-nested quotes
+
+                // Simple heuristic: if followed by whitespace or punctuation, treat as closing
+                if i + 1 < chars.count {
+                    let nextChar = chars[i + 1]
+                    if nextChar.isWhitespace || nextChar == "." || nextChar == "!" || nextChar == "?" || nextChar == "," || nextChar == ";" || nextChar == ":" {
+                        // This might be a closing quote - don't increment depth
+                    } else if isOpeningQuote {
+                        // Opening quote followed by letter - likely speech start
                     }
                 }
 
@@ -252,22 +286,14 @@ final class TextChunker {
                     return prevIsWord || nextIsWord
                 }()
                 currentSentence.append(char)
-                if !isApostrophe {
-                    quoteDepth += 1
-                    if quoteDepth > 1 {
-                        quoteDepth -= 1
-                    }
-                }
+                // Don't treat apostrophes as quote delimiters for sentence splitting
 
             case ".", "!", "?":
-                // Check quote context:
+                // Check if punctuation is inside quotes:
                 // - nextIsQuote: punctuation before closing quote → don't split
-                // - quoteDepth > 0: currently inside quotes → don't split
-                // - prevIsQuote but NOT nextIsQuote: punctuation after closing quote → DO split (sentence ended)
                 let nextIsQuote = i + 1 < chars.count && chars[i+1] == "\""
-                let isInsideQuotes = quoteDepth > 0 || nextIsQuote
 
-                if isInsideQuotes {
+                if nextIsQuote {
                     currentSentence.append(char)
                     i += 1
                     continue
@@ -288,7 +314,7 @@ final class TextChunker {
                     }
                 }
 
-                // Skip if followed by lowercase (likely abbreviation like "e.g.")
+                // Skip if followed by lowercase (not end of sentence)
                 if i + 1 < chars.count {
                     let nextChar = chars[i + 1]
                     if nextChar.isWhitespace {
@@ -336,6 +362,16 @@ final class TextChunker {
         // Handle edge case: no sentences found, return original text
         if sentences.isEmpty && !text.isEmpty {
             return [text]
+        }
+
+        // Filter out single quote characters and other non-sentences
+        sentences = sentences.filter { sentence in
+            let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Reject if it's just whitespace or very short (less than 2 chars)
+            guard trimmed.count >= 2 else { return false }
+            // Reject if it's just a single punctuation character
+            let isJustPunctuation = trimmed.rangeOfCharacter(from: CharacterSet.letters) == nil
+            return !isJustPunctuation
         }
 
         return sentences

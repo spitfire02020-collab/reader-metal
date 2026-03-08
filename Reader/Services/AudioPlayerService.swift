@@ -41,6 +41,12 @@ final class AudioPlayerService: NSObject, ObservableObject {
     // Delegate uses this to decide whether to wait for more chunks
     @Published var isExpectingMoreChunks = false
 
+    // Guard flag to prevent race condition between delegate and polling
+    private var isTransitioningChapter = false
+
+    /// Callback triggered when a new chunk starts playing - used for syncing text highlight
+    var onChunkPlaybackStarted: ((Int) -> Void)?
+
     /// Current item ID for checking database for chunk progress
     private var currentItemID: UUID?
 
@@ -709,6 +715,10 @@ final class AudioPlayerService: NSObject, ObservableObject {
         isPlaying = true
         startProgressUpdates()
         updateNowPlayingInfo()
+
+        // Trigger highlight sync callback - fires when audio actually starts playing
+        let chunkIndex = currentChunkIndex
+        onChunkPlaybackStarted?(chunkIndex)
     }
 
     func pause() {
@@ -772,6 +782,14 @@ final class AudioPlayerService: NSObject, ObservableObject {
 
     func nextChapter() {
         NSLog("[AudioPlayer] nextChapter CALLED: current=\(currentChunkIndex), totalFiles=\(audioFiles.count)")
+        // Guard against race condition: prevent double-calls from delegate + polling
+        guard !isTransitioningChapter else {
+            NSLog("[AudioPlayer] nextChapter: SKIPPED (already transitioning)")
+            return
+        }
+        isTransitioningChapter = true
+        defer { isTransitioningChapter = false }
+
         guard currentChunkIndex + 1 < audioFiles.count else {
             NSLog("[AudioPlayer] nextChapter: NO MORE CHAPTERS, stopping")
             isPlaying = false
@@ -900,6 +918,7 @@ extension AudioPlayerService: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         NSLog("[AudioPlayer] delegate: didFinishPlaying called, flag=\(flag)")
         Task { @MainActor in
+            // Re-read values at decision time to avoid stale closure captures
             let currentIndex = self.currentChunkIndex
             let totalFiles = self.audioFiles.count
             let expectingMore = self.isExpectingMoreChunks
@@ -910,6 +929,8 @@ extension AudioPlayerService: AVAudioPlayerDelegate {
             NSLog("[AudioPlayer] delegate: audioFiles = \(self.audioFiles.map { $0.lastPathComponent })")
             NSLog("[AudioPlayer] delegate: currentChunkIndex now = \(self.currentChunkIndex)")
 
+            // Guard: Don't advance if already at/past available chunks
+            // This prevents re-playing chunks when audioFiles array updates mid-playback
             let moreChunksAvailable = currentIndex + 1 < totalFiles
             NSLog("[AudioPlayer] delegate: condition (currentIndex + 1 < totalFiles) = \(moreChunksAvailable) (\(currentIndex) + 1 < \(totalFiles))")
 
@@ -928,6 +949,10 @@ extension AudioPlayerService: AVAudioPlayerDelegate {
                     guard let self = self else { return }
                     await self.pollForNewChunks()
                 }
+            } else {
+                // No more chunks and synthesis complete - stop
+                NSLog("[AudioPlayer] delegate: playback complete, stopping")
+                self.isPlaying = false
             }
         }
     }
