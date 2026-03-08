@@ -288,12 +288,27 @@ final class TextChunker {
                 currentSentence.append(char)
                 // Don't treat apostrophes as quote delimiters for sentence splitting
 
-            case ".", "!", "?":
+            case ".", "!", "?"
                 // Check if punctuation is inside quotes:
-                // - nextIsQuote: punctuation before closing quote → don't split
-                let nextIsQuote = i + 1 < chars.count && chars[i+1] == "\""
+                // Only skip splitting if: quote after punctuation AND no more text after the quote
+                var nextIsClosingQuote = false
+                if i + 1 < chars.count && chars[i+1] == "\"" {
+                    // Check if there's non-whitespace text after the closing quote
+                    let afterQuoteIndex = i + 2
+                    var hasMoreText = false
+                    for j in afterQuoteIndex..<chars.count {
+                        if !chars[j].isWhitespace {
+                            hasMoreText = true
+                            break
+                        }
+                    }
+                    // Only treat as closing quote (don't split) if NO more text follows
+                    if !hasMoreText {
+                        nextIsClosingQuote = true
+                    }
+                }
 
-                if nextIsQuote {
+                if nextIsClosingQuote {
                     currentSentence.append(char)
                     i += 1
                     continue
