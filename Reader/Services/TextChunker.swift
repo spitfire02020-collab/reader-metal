@@ -276,9 +276,23 @@ final class TextChunker {
             case ".", "!", "?":
                 currentSentence.append(char)
 
-                // Don't split if inside quotes
-                if !isOutsideQuotes(currentSentence) {
-                    // Inside quotes - don't split
+                // Check if next non-whitespace char is a closing quote (end of dialogue)
+                var j = i + 1
+                while j < chars.count && chars[j].isWhitespace {
+                    j += 1
+                }
+                let nextNonSpace = j < chars.count ? chars[j] : nil
+                let nextIsClosingQuote = nextNonSpace == "\""
+
+                // If next is closing quote, include it in current sentence then split
+                if nextIsClosingQuote {
+                    currentSentence.append(chars[j])
+                    i = j + 1
+                }
+
+                // Check if we're inside quotes
+                if !isOutsideQuotes(currentSentence) && !nextIsClosingQuote {
+                    // Inside quotes and next char doesn't close the quote - don't split
                     i += 1
                     continue
                 }
