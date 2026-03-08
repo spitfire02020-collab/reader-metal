@@ -267,16 +267,20 @@ final class TextChunker {
             case "'":
                 currentSentence.append(char)
 
-            case ",", ".", "!", "?":
+            case ",":
+                // Commas never split sentences - just append
+                currentSentence.append(char)
+                i += 1
+                continue
+
+            case ".", "!", "?":
                 currentSentence.append(char)
 
-                // For commas, question marks, exclamation marks: don't split if inside quotes
-                if char == "," || char == "?" || char == "!" {
-                    if !isOutsideQuotes(text, from: i + 1) {
-                        // Inside quotes - don't split
-                        i += 1
-                        continue
-                    }
+                // Don't split if inside quotes
+                if !isOutsideQuotes(text, from: i + 1) {
+                    // Inside quotes - don't split
+                    i += 1
+                    continue
                 }
 
                 // Check for abbreviation (only for period)
