@@ -120,7 +120,12 @@ final class PlayerViewModel: ObservableObject {
     /// Load existing chunks from disk
     func loadExistingChunks() {
         let dir = chunkDirectory
-        NSLog("[PlayerVM] loadExistingChunks: checking \(dir.path)")
+        let audioBaseDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent("Audio")
+        NSLog("[PlayerVM] loadExistingChunks: item=\(item.id.uuidString)")
+        NSLog("[PlayerVM] loadExistingChunks: docDir=\(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.path)")
+        NSLog("[PlayerVM] loadExistingChunks: audioBaseDir exists=\(FileManager.default.fileExists(atPath: audioBaseDir.path))")
+        NSLog("[PlayerVM] loadExistingChunks: chunkDir=\(dir.path)")
+
         guard FileManager.default.fileExists(atPath: dir.path) else {
             NSLog("[PlayerVM] loadExistingChunks: directory does not exist")
             return
