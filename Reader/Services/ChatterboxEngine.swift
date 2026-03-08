@@ -178,10 +178,12 @@ final class ChatterboxEngine: ObservableObject {
         let fnPtr = OrtExt.getRegisterCustomOpsFunctionPointer()
         try options.registerCustomOps(functionPointer: fnPtr)
 
-        // Graph optimization disabled to match reference implementation exactly.
-        // The Python reference uses ORT_DISABLE_ALL which is .none.
-        // Extended optimization can cause shape inference issues with dynamic models.
-        try options.setGraphOptimizationLevel(.none)
+        // Graph optimization: .basic provides speedup without shape inference issues
+        // Extended (.all) can cause shape inference issues with dynamic models
+        try options.setGraphOptimizationLevel(.basic)
+
+        // Configure threads for parallel processing within operations
+        try options.setIntraOpNumThreads(4)
 
         // Try to use CoreML execution provider for GPU acceleration via Apple Neural Engine
         // CoreML supports dynamic shapes better than the old CoreML provider
