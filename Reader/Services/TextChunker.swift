@@ -288,7 +288,7 @@ final class TextChunker {
                 currentSentence.append(char)
                 // Don't treat apostrophes as quote delimiters for sentence splitting
 
-            case ".", "!", "?" as Character
+            case ".", "!", "?":
                 // Check if punctuation is inside quotes:
                 // Only skip splitting if: quote after punctuation AND no more text after the quote
                 var nextIsClosingQuote = false
