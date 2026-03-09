@@ -69,6 +69,9 @@ struct SynthesizedChunk: Sendable {
 // MARK: - Chatterbox Engine
 
 final class ChatterboxEngine: ObservableObject {
+    /// Shared singleton instance - ensures cancellation works across all synthesis requests
+    static let shared = ChatterboxEngine()
+
     @Published var isLoaded = false
     @Published var isSynthesizing = false
     @Published var synthesisProgress: Double = 0

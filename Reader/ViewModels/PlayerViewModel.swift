@@ -188,7 +188,7 @@ final class PlayerViewModel: ObservableObject {
     ) {
         self.item = item
         self.audioPlayer = audioPlayer ?? AudioPlayerService()
-        self.engine = engine ?? ChatterboxEngine()
+        self.engine = engine ?? ChatterboxEngine.shared
         self.downloadService = downloadService ?? ModelDownloadService()
         self.synthesisDB = synthesisDB ?? SynthesisDatabase()
         self.onItemUpdate = onItemUpdate

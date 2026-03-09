@@ -20,7 +20,7 @@ final class LibraryViewModel: ObservableObject {
     }
 
     private let extractor = WebContentExtractor()
-    private let engine = ChatterboxEngine()
+    private let engine = ChatterboxEngine.shared
 
     // Secure file storage path - uses iOS Data Protection
     private var libraryFileURL: URL {

@@ -23,7 +23,7 @@ final class ServiceContainer {
 
     // For services that need initialization
     func makeChatterboxEngine() -> ChatterboxEngine {
-        ChatterboxEngine()
+        ChatterboxEngine.shared
     }
 
     func makeWebContentExtractor() -> WebContentExtractor {
