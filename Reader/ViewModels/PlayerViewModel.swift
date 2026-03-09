@@ -472,6 +472,11 @@ final class PlayerViewModel: ObservableObject {
     /// The sentence chunks for TTS - now cached
     private var cachedTextChunks: [String] = []
 
+    /// Cleaned text for display - matches chunk formatting exactly
+    var cleanedText: String {
+        TextChunker.cleanTextForDisplay(item.textContent)
+    }
+
     var textChunks: [String] {
         if cachedTextChunks.isEmpty {
             cachedTextChunks = TextChunker.chunkText(item.textContent)

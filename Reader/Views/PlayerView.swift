@@ -639,7 +639,7 @@ struct PlayerView: View {
     private var textViewSheet: some View {
         NavigationStack {
             SelectableTextView(
-                text: viewModel.item.textContent,
+                text: viewModel.cleanedText,
                 chunks: viewModel.textChunks,
                 selectedText: $selectedText,
                 onPlaySelection: {

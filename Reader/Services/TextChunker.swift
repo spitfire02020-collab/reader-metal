@@ -119,6 +119,12 @@ final class TextChunker {
 
     // MARK: - Text Cleaning
 
+    /// Clean text for display - removes URLs, HTML, normalizes whitespace
+    /// Use this text for display so chunks match exactly
+    static func cleanTextForDisplay(_ text: String) -> String {
+        return cleanText(text)
+    }
+
     private static func cleanText(_ text: String) -> String {
         var cleaned = text
 
