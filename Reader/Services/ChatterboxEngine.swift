@@ -270,6 +270,51 @@ final class ChatterboxEngine: ObservableObject {
         ChatterboxEngine.currentSynthesisTask?.cancel()
         chatterboxLogger.info("Cancelled any previous synthesis")
 
+        // Wrap synthesis in a trackable task
+        let synthesisTask = Task {
+            do {
+                try await synthesizeInternal(
+                    text: text,
+                    preChunkedText: preChunkedText,
+                    referenceAudioURL: referenceAudioURL,
+                    outputURL: outputURL,
+                    onChunkReady: onChunkReady,
+                    onProgress: onProgress,
+                    seed: seed,
+                    exaggeration: exaggeration,
+                    cfgWeight: cfgWeight,
+                    speedFactor: speedFactor
+                )
+            } catch {
+                if !Task.isCancelled {
+                    chatterboxLogger.error("Synthesis failed: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        ChatterboxEngine.currentSynthesisTask = synthesisTask
+
+        // Wait for completion (but allow cancellation)
+        do {
+            try await synthesisTask.value
+        } catch {
+            // Cancellation is expected
+        }
+    }
+
+    // Internal synthesis implementation
+    private func synthesizeInternal(
+        text: String,
+        preChunkedText: [String]? = nil,
+        referenceAudioURL: URL? = nil,
+        outputURL: URL,
+        onChunkReady: ((URL) -> Void)? = nil,
+        onProgress: ((Double) -> Void)? = nil,
+        seed: Int = 0,
+        exaggeration: Float = 0.5,
+        cfgWeight: Float = 0.5,
+        speedFactor: Float = 1.0
+    ) async throws {
         isSynthesizing = true
         synthesisProgress = 0
         defer {

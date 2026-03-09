@@ -1008,6 +1008,15 @@ final class PlayerViewModel: ObservableObject {
     func generateOnly() async {
         NSLog("[PlayerVM] generateOnly called for: \(item.title)")
 
+        // Stop any current playback and cancel synthesis from previous article
+        // This ensures we don't have multiple syntheses playing simultaneously
+        audioPlayer.stop()
+        audioPlayer.clearAudioFiles()
+        synthesisTask?.cancel()
+        synthesisTask = nil
+        isSynthesizing = false
+        isStreamingAudio = false
+
         // Check if already ready (either single file or chunks)
         if item.status == .ready && (item.audioFileURL != nil || !item.generatedChunks.isEmpty) {
             NSLog("[PlayerVM] Audio already ready")
