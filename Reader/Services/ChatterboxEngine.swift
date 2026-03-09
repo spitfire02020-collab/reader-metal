@@ -334,6 +334,8 @@ final class ChatterboxEngine: ObservableObject {
         let totalBatches = (chunkTasks.count + maxConcurrent - 1) / maxConcurrent
 
         for batchIdx in 0..<totalBatches {
+            try Task.checkCancellation()  // Stop if cancelled before starting new batch
+
             let startIdx = batchIdx * maxConcurrent
             let endIdx = min(startIdx + maxConcurrent, chunkTasks.count)
             let batch = Array(chunkTasks[startIdx..<endIdx])
@@ -781,6 +783,7 @@ final class ChatterboxEngine: ObservableObject {
         var shouldStopDecoding = false
 
         for step in 0..<self.config.maxNewTokens {
+            try Task.checkCancellation()  // Stop if cancelled
             chatterboxLogger.debug("decode step \(step): maxToken=\(self.config.maxNewTokens)")
 
             var nextStepInputs: [String: ORTValue] = [:]
