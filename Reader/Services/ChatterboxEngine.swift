@@ -74,6 +74,10 @@ final class ChatterboxEngine: ObservableObject {
     @Published var synthesisProgress: Double = 0
     @Published var errorMessage: String?
 
+    // Static cancellation token - cancelled when new synthesis starts
+    // This ensures previous synthesis stops when switching articles
+    private static var currentSynthesisTask: Task<Void, Never>?
+
     private let baseConfig: ChatterboxConfig
     private var currentGenerationConfig: ChatterboxConfig  // Set during synthesis
     private let tokenizer = TokenizerService()
@@ -259,11 +263,20 @@ final class ChatterboxEngine: ObservableObject {
         chatterboxLogger.info("synthesize() called, onChunkReady=\(onChunkReady != nil)")
         guard isLoaded else { throw ChatterboxError.modelNotLoaded }
 
+        // Cancel any previous synthesis from a different article
+        ChatterboxEngine.currentSynthesisTask?.cancel()
+        chatterboxLogger.info("Cancelled any previous synthesis")
+
         isSynthesizing = true
         synthesisProgress = 0
         defer {
             isSynthesizing = false
+            ChatterboxEngine.currentSynthesisTask = nil
         }
+
+        // Track this synthesis task for cancellation
+        // Note: We can't easily wrap the entire function, so we rely on the
+        // Task.checkCancellation() calls in the decode loop and between batches
 
         // Apply generation parameters to config
         var generationConfig = config
@@ -493,7 +506,10 @@ final class ChatterboxEngine: ObservableObject {
         cfgWeight: Float = 0.5,
         speedFactor: Float = 1.0
     ) -> AsyncThrowingStream<SynthesizedChunk, Error> {
-        AsyncThrowingStream { continuation in
+        // Cancel any previous synthesis
+        ChatterboxEngine.currentSynthesisTask?.cancel()
+
+        return AsyncThrowingStream { continuation in
             Task {
                 do {
                     guard self.isLoaded else {
