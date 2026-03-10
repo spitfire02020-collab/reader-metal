@@ -300,6 +300,9 @@ final class ChatterboxEngine: ObservableObject {
         } catch {
             // Cancellation is expected
         }
+
+        // Clear the task reference after completion
+        ChatterboxEngine.currentSynthesisTask = nil
     }
 
     // Internal synthesis implementation
@@ -319,7 +322,8 @@ final class ChatterboxEngine: ObservableObject {
         synthesisProgress = 0
         defer {
             isSynthesizing = false
-            ChatterboxEngine.currentSynthesisTask = nil
+            // Note: currentSynthesisTask is cleared in synthesize() after task completes
+            // to avoid race condition where it gets cleared while still running
         }
 
         // Track this synthesis task for cancellation
@@ -598,6 +602,9 @@ final class ChatterboxEngine: ObservableObject {
 
                     // Process each chunk
                     for (index, chunk) in chunks.enumerated() {
+                        // Check for cancellation
+                        try Task.checkCancellation()
+
                         // Strip quotes for TTS
                         let chunkForTTS = stripQuotes(chunk.trimmingCharacters(in: .whitespacesAndNewlines))
                         guard !chunkForTTS.isEmpty else {
