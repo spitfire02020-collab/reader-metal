@@ -689,13 +689,19 @@ final class PlayerViewModel: ObservableObject {
     /// Toggle pause/resume of audio generation
     func toggleGenerationPause() {
         if isPaused {
-            // Resume - update DB status
+            // Resume - update DB status and restart playback
             try? synthesisDB.updateItemStatus(id: item.id.uuidString, status: SynthesisItemStatus.synthesizing)
+            // Resume audio playback if there was audio loaded
+            if audioPlayer.duration > 0 {
+                audioPlayer.play()
+            }
         } else {
-            // Pause - cancel synthesis and update DB status
+            // Pause - cancel synthesis, pause audio, and update DB status
             synthesisTask?.cancel()
             synthesisTask = nil
             audioPlayer.isExpectingMoreChunks = false
+            // Also pause audio playback
+            audioPlayer.pause()
             try? synthesisDB.updateItemStatus(id: item.id.uuidString, status: SynthesisItemStatus.paused)
             isSynthesizing = false
             isStreamingAudio = false
