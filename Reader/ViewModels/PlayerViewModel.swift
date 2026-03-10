@@ -306,10 +306,10 @@ final class PlayerViewModel: ObservableObject {
         onItemUpdate: ((LibraryItem) -> Void)? = nil
     ) {
         self.item = item
-        self.audioPlayer = audioPlayer ?? AudioPlayerService()
+        self.audioPlayer = audioPlayer ?? AudioPlayerService.shared
         self.engine = engine ?? ChatterboxEngine.shared
-        self.downloadService = downloadService ?? ModelDownloadService()
-        self.synthesisDB = synthesisDB ?? SynthesisDatabase()
+        self.downloadService = downloadService ?? ModelDownloadService.shared
+        self.synthesisDB = synthesisDB ?? SynthesisDatabase.shared
         self.onItemUpdate = onItemUpdate
 
         // Set up callback for syncing text highlight when playback starts
