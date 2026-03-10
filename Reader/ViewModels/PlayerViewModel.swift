@@ -117,6 +117,41 @@ final class PlayerViewModel: ObservableObject {
         return chunkDirectory.appendingPathComponent("chunk_\(index).wav")
     }
 
+    /// Resolve chunk path - handles migration from old format to new format
+    /// Old format: Documents/Audio/{uuid}_part{n}.wav (flat directory)
+    /// New format: Documents/Audio/{uuid}/chunk_{n}.wav (subdirectory)
+    private func resolveChunkPath(oldPath: String, chunkIndex: Int) -> String? {
+        let fm = FileManager.default
+
+        // First check if old path still exists
+        if fm.fileExists(atPath: oldPath) {
+            return oldPath
+        }
+
+        // Old path doesn't exist - check new format
+        let newPath = chunkURL(for: chunkIndex).path
+        if fm.fileExists(atPath: newPath) {
+            NSLog("[PlayerVM] resolveChunkPath: Found chunk at new path: \(newPath)")
+            return newPath
+        }
+
+        // Also check if migration happened - files might be in subdirectory with old name
+        // Check: Documents/Audio/{uuid}/{uuid}_part{n}.wav
+        let docsDir = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let oldStylePath = docsDir
+            .appendingPathComponent("Audio/\(item.id.uuidString)")
+            .appendingPathComponent("\(item.id.uuidString)_part\(chunkIndex).wav")
+            .path
+
+        if fm.fileExists(atPath: oldStylePath) {
+            NSLog("[PlayerVM] resolveChunkPath: Found chunk at migrated path: \(oldStylePath)")
+            return oldStylePath
+        }
+
+        NSLog("[PlayerVM] resolveChunkPath: Chunk not found for index \(chunkIndex), oldPath: \(oldPath)")
+        return nil
+    }
+
     /// Load existing chunks from disk
     func loadExistingChunks() {
         let dir = chunkDirectory
@@ -882,22 +917,30 @@ final class PlayerViewModel: ObservableObject {
                 // Already completed - load chunks and skip synthesis
                 NSLog("[PlayerVM] Synthesis already completed for \(itemId)")
                 isAlreadyCompleted = true
-                // Load completed chunks into memory
+                // Load completed chunks into memory - resolve path in case of format migration
                 if let completedChunks = try? synthesisDB.getCompletedChunks(itemId: itemId) {
                     for chunk in completedChunks {
                         if let path = chunk.filePath {
-                            item.generatedChunks[chunk.chunkIndex] = path
+                            let resolvedPath = resolveChunkPath(oldPath: path, chunkIndex: chunk.chunkIndex)
+                            if let resolved = resolvedPath {
+                                item.generatedChunks[chunk.chunkIndex] = resolved
+                                NSLog("[PlayerVM] Loaded chunk \(chunk.chunkIndex) from resolved path: \(resolved)")
+                            }
                         }
                     }
                 }
             } else if existingItem.status == .paused || existingItem.status == .error || existingItem.status == .cancelled {
                 NSLog("[PlayerVM] Resuming synthesis for \(itemId), progress: \(existingItem.completedChunks)/\(existingItem.totalChunks)")
                 isResuming = true
-                // Load completed chunks into memory
+                // Load completed chunks into memory - resolve path in case of format migration
                 if let completedChunks = try? synthesisDB.getCompletedChunks(itemId: itemId) {
                     for chunk in completedChunks {
                         if let path = chunk.filePath {
-                            item.generatedChunks[chunk.chunkIndex] = path
+                            let resolvedPath = resolveChunkPath(oldPath: path, chunkIndex: chunk.chunkIndex)
+                            if let resolved = resolvedPath {
+                                item.generatedChunks[chunk.chunkIndex] = resolved
+                                NSLog("[PlayerVM] Loaded chunk \(chunk.chunkIndex) from resolved path: \(resolved)")
+                            }
                         }
                     }
                 }
