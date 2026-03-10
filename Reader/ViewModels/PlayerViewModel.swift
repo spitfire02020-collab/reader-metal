@@ -141,14 +141,27 @@ final class PlayerViewModel: ObservableObject {
             // Collect all valid chunk indices and their URLs
             var chunks: [(index: Int, url: URL)] = []
             for file in files where file.pathExtension == "wav" {
-                // Skip temporary "part" files from interrupted synthesis
-                if file.lastPathComponent.contains("_part") {
-                    continue
+                // Handle both regular files (chunk_0.wav) and _part files (chunk_0_part0.wav)
+                // Extract index from filename - handle "chunk_X" or "chunk_X_partY" formats
+                let filename = file.deletingLastPathComponent().deletingPathExtension().lastPathComponent
+                var index: Int?
+
+                if filename.contains("_part") {
+                    // Format: chunk_X_partY - extract the first number
+                    let parts = filename.split(separator: "_")
+                    if parts.count >= 2, let firstNum = Int(parts[1]) {
+                        index = firstNum
+                    }
+                } else {
+                    // Format: chunk_X - extract the last number
+                    if let indexStr = filename.split(separator: "_").last,
+                       let idx = Int(indexStr) {
+                        index = idx
+                    }
                 }
-                // Extract chunk index from filename like "chunk_0.wav"
-                if let indexStr = file.deletingPathExtension().lastPathComponent.split(separator: "_").last,
-                   let index = Int(indexStr) {
-                    chunks.append((index: index, url: file))
+
+                if let idx = index {
+                    chunks.append((index: idx, url: file))
                 }
             }
 
@@ -974,6 +987,8 @@ final class PlayerViewModel: ObservableObject {
             audioPlayer.isExpectingMoreChunks = false
             item.audioFileURL = outputURL.path
             item.status = .ready
+            // Save library with generated chunks so they persist across app restarts
+            onItemUpdate?(item)
             isStreamingAudio = false
 
             // If the player finished the streaming chunks while we were synthesizing,
@@ -1103,6 +1118,8 @@ final class PlayerViewModel: ObservableObject {
 
             // Mark as ready
             item.status = .ready
+            // Save library with generated chunks so they persist across app restarts
+            onItemUpdate?(item)
 
             // Clear synthesis progress
             audioPlayer.clearSynthesisProgress(item.id)
