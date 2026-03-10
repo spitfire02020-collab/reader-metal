@@ -439,8 +439,18 @@ final class PlayerViewModel: ObservableObject {
         if let files = try? FileManager.default.contentsOfDirectory(at: outputDir, includingPropertiesForKeys: nil) {
             for file in files {
                 let filename = file.deletingPathExtension().lastPathComponent
-                if let partRange = filename.range(of: "_part") {
-                    let indexStr = String(filename[partRange.upperBound...])
+                // Match both old format "uuid_part0" and new format "uuid_0"
+                let partRange = filename.range(of: "_part")
+                let newFormatRange = filename.range(of: "_\\d", options: .regularExpression)
+
+                if let pr = partRange {
+                    let indexStr = String(filename[pr.upperBound...])
+                    if let index = Int(indexStr), index >= currentChunkIndex {
+                        try? FileManager.default.removeItem(at: file)
+                        NSLog("[PlayerVM] Deleted chunk file: \(file.lastPathComponent)")
+                    }
+                } else if let nr = newFormatRange {
+                    let indexStr = String(filename[nr.upperBound...])
                     if let index = Int(indexStr), index >= currentChunkIndex {
                         try? FileManager.default.removeItem(at: file)
                         NSLog("[PlayerVM] Deleted chunk file: \(file.lastPathComponent)")
