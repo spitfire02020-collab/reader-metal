@@ -221,6 +221,8 @@ struct VoiceSelectionView: View {
                 selectedVoice = voice
                 // Notify parent to save voice selection
                 onVoiceSelected?(voice)
+                // Dismiss sheet after selection
+                dismiss()
             }
         } label: {
             HStack(spacing: 14) {
@@ -729,6 +731,8 @@ struct VoiceSelectionView: View {
 
         // Notify parent to save voice selection
         onVoiceSelected?(voice)
+        // Dismiss sheet after selection
+        dismiss()
 
         // Reset audio session
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
@@ -778,6 +782,8 @@ struct VoiceSelectionView: View {
 
                 // Notify parent to save
                 onVoiceSelected?(voice)
+                // Dismiss sheet after selection
+                dismiss()
 
                 NSLog("[VoiceSelection] Imported voice: \(voiceName) from \(fileName)")
             } catch {

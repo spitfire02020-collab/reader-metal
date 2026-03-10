@@ -275,18 +275,18 @@ final class PlayerViewModel: ObservableObject {
     /// Restart synthesis with current voice (used when voice/settings change during playback)
     /// Uses database for full resume capability
     private func restartWithNewVoice() {
-        // Get current position before stopping
-        let currentChunkIndex = audioPlayer.currentChunkIndex
-        let itemId = item.id.uuidString
-        NSLog("[PlayerVM] Voice changed at chunk \(currentChunkIndex), restarting from there using DB")
-
-        // Stop current playback
+        // Stop current playback first to avoid race condition
         audioPlayer.stop()
         audioPlayer.clearAudioFiles()
         synthesisTask?.cancel()
         isSynthesizing = false
         isStreamingAudio = false
         isPaused = false
+
+        // Get current position AFTER stopping
+        let currentChunkIndex = audioPlayer.currentChunkIndex
+        let itemId = item.id.uuidString
+        NSLog("[PlayerVM] Voice changed at chunk \(currentChunkIndex), restarting from there using DB")
 
         // Reset highlighting
         currentPlayingIndex = -1

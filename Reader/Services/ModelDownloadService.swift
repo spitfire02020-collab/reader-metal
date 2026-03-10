@@ -75,6 +75,8 @@ final class ModelDownloadService: NSObject, ObservableObject {
 
     private var downloadTasks: [URLSessionDownloadTask] = []
     private var urlSession: URLSession!
+    /// Flag to signal cancellation
+    private var isCancelled = false
 
     override init() {
         super.init()
@@ -430,6 +432,9 @@ final class ModelDownloadService: NSObject, ObservableObject {
     func downloadModels(variant: ModelVariant = .q4f16) async {
         guard !isDownloading else { return }
 
+        // Reset cancellation flag
+        isCancelled = false
+
         // Check if models are bundled - if so, skip download
         checkModelAvailability(variant: variant)
         if isModelReady {
@@ -460,6 +465,10 @@ final class ModelDownloadService: NSObject, ObservableObject {
 
             // Download each model component (ONNX graph + weights)
             for (index, component) in ModelComponent.allCases.enumerated() {
+                // Check for cancellation
+                try Task.checkCancellation()
+                if isCancelled { break }
+
                 currentComponent = component
                 componentProgress[component] = 0
 
@@ -495,7 +504,11 @@ final class ModelDownloadService: NSObject, ObservableObject {
             isModelReady = true
             overallProgress = 1.0
         } catch {
-            errorMessage = "Download failed: \(error.localizedDescription)"
+            if isCancelled {
+                NSLog("[ModelDownload] Download was cancelled")
+            } else {
+                errorMessage = "Download failed: \(error.localizedDescription)"
+            }
         }
 
         isDownloading = false
@@ -508,6 +521,10 @@ final class ModelDownloadService: NSObject, ObservableObject {
         label: String,
         progressHandler: ((Double) -> Void)? = nil
     ) async throws {
+        // Check for cancellation
+        try Task.checkCancellation()
+        if isCancelled { return }
+
         // Skip if file already exists
         if FileManager.default.fileExists(atPath: destination.path) {
             progressHandler?(1.0)
@@ -531,6 +548,14 @@ final class ModelDownloadService: NSObject, ObservableObject {
         }
         try FileManager.default.moveItem(at: tempURL, to: destination)
 
+        // Validate file was downloaded correctly (check size > 0)
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: destination.path),
+           let fileSize = attrs[.size] as? Int64,
+           fileSize == 0 {
+            try FileManager.default.removeItem(at: destination)
+            throw URLError(.cannotWriteToFile)
+        }
+
         // Fix topological sort bug in ONNX graph files exported by PyTorch 2.9+
         // (Only the small .onnx graph file needs fixing; .onnx_data weights are untouched)
         if destination.pathExtension == "onnx" {
@@ -541,6 +566,18 @@ final class ModelDownloadService: NSObject, ObservableObject {
     }
 
     // MARK: - Cleanup
+
+    /// Cancel any in-progress download
+    func cancelDownload() {
+        isCancelled = true
+        // Cancel any active URLSession tasks
+        urlSession.getAllTasks { tasks in
+            tasks.forEach { $0.cancel() }
+        }
+        isDownloading = false
+        currentComponent = nil
+        NSLog("[ModelDownload] Download cancelled")
+    }
 
     func deleteModels() {
         try? FileManager.default.removeItem(at: modelsDirectory)
