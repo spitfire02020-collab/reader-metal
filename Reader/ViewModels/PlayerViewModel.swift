@@ -120,32 +120,49 @@ final class PlayerViewModel: ObservableObject {
     /// Resolve chunk path - handles migration from old format to new format
     /// Old format: Documents/Audio/{uuid}_part{n}.wav (flat directory)
     /// New format: Documents/Audio/{uuid}/chunk_{n}.wav (subdirectory)
+    /// Also handles: Documents/Audio/{uuid}/chunk_part{n}.wav (old subdirectory format)
     private func resolveChunkPath(oldPath: String, chunkIndex: Int) -> String? {
         let fm = FileManager.default
 
-        // First check if old path still exists
+        // First check if old path still exists (same app instance)
         if fm.fileExists(atPath: oldPath) {
             return oldPath
         }
 
-        // Old path doesn't exist - check new format
-        let newPath = chunkURL(for: chunkIndex).path
-        if fm.fileExists(atPath: newPath) {
-            NSLog("[PlayerVM] resolveChunkPath: Found chunk at new path: \(newPath)")
-            return newPath
+        // Extract item UUID from old path - handle both absolute and relative paths
+        // Old path format: .../Audio/{uuid}/chunk_part{n}.wav or Audio/{uuid}/chunk_part{n}.wav
+        var itemUUID = item.id.uuidString
+        if let range = oldPath.range(of: "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", options: .regularExpression) {
+            itemUUID = String(oldPath[range])
         }
 
-        // Also check if migration happened - files might be in subdirectory with old name
-        // Check: Documents/Audio/{uuid}/{uuid}_part{n}.wav
         let docsDir = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let oldStylePath = docsDir
-            .appendingPathComponent("Audio/\(item.id.uuidString)")
-            .appendingPathComponent("\(item.id.uuidString)_part\(chunkIndex).wav")
-            .path
+        let chunkDir = docsDir.appendingPathComponent("Audio/\(itemUUID)")
 
-        if fm.fileExists(atPath: oldStylePath) {
-            NSLog("[PlayerVM] resolveChunkPath: Found chunk at migrated path: \(oldStylePath)")
-            return oldStylePath
+        // Check if chunk directory exists
+        guard fm.fileExists(atPath: chunkDir.path) else {
+            NSLog("[PlayerVM] resolveChunkPath: Chunk directory not found: \(chunkDir.path)")
+            return nil
+        }
+
+        // Try multiple filename formats in order of preference
+        let formats = [
+            "chunk_\(chunkIndex).wav",      // New format
+            "chunk_part\(chunkIndex).wav",   // Old subdirectory format
+            "\(itemUUID)_part\(chunkIndex).wav" // Very old flat format
+        ]
+
+        for filename in formats {
+            let candidatePath = chunkDir.appendingPathComponent(filename).path
+            if fm.fileExists(atPath: candidatePath) {
+                NSLog("[PlayerVM] resolveChunkPath: Found chunk at \(candidatePath)")
+                return candidatePath
+            }
+        }
+
+        // List all files in chunk directory for debugging
+        if let files = try? fm.contentsOfDirectory(atPath: chunkDir.path) {
+            NSLog("[PlayerVM] resolveChunkPath: Files in \(chunkDir.path): \(files)")
         }
 
         NSLog("[PlayerVM] resolveChunkPath: Chunk not found for index \(chunkIndex), oldPath: \(oldPath)")
@@ -661,6 +678,9 @@ final class PlayerViewModel: ObservableObject {
 
     /// Play from current position (resume or start from where user last tapped)
     func playFromCurrentPosition() {
+        // Validate state consistency before making any decisions
+        validatePlaybackState()
+
         // If already playing, pause - also stop synthesis
         if audioPlayer.isPlaying {
             audioPlayer.pause()
@@ -862,6 +882,20 @@ final class PlayerViewModel: ObservableObject {
             isStreamingAudio = false
         }
         isPaused.toggle()
+
+        // Validate state consistency between isPaused and audioPlayer.isPlaying
+        validatePlaybackState()
+    }
+
+    /// Validate and sync isPaused with audioPlayer.isPlaying
+    private func validatePlaybackState() {
+        if audioPlayer.isPlaying && isPaused {
+            isPaused = false
+            NSLog("[PlayerVM] State sync: isPaused set to false (audioPlayer.isPlaying=true)")
+        } else if !audioPlayer.isPlaying && !isPaused && audioPlayer.duration > 0 {
+            isPaused = true
+            NSLog("[PlayerVM] State sync: isPaused set to true (audioPlayer.isPlaying=false, duration>0)")
+        }
     }
 
     /// Cancel audio generation
