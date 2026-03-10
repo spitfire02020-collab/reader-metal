@@ -97,6 +97,10 @@ struct LibraryView: View {
                         viewModel.items[index] = updatedItem
                         viewModel.saveLibrary()
                     }
+                    // Also update nowPlayingItem if it's the same item
+                    if nowPlayingItem?.id == updatedItem.id {
+                        nowPlayingItem = updatedItem
+                    }
                 }
             }
             .sheet(isPresented: $showModelSetup) {

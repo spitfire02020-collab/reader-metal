@@ -728,6 +728,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
         }
         player.pause()
         isPlaying = false
+        isExpectingMoreChunks = false  // Reset flag when pausing
         stopProgressUpdates()
         updateNowPlayingInfo()
     }
@@ -743,6 +744,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
         }
         player.stop()
         player.currentTime = 0
+        isExpectingMoreChunks = false  // Reset flag when stopping
         DispatchQueue.main.async { [weak self] in
             self?.isPlaying = false
             self?.currentTime = 0

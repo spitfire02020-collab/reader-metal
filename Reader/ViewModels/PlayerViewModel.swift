@@ -664,6 +664,8 @@ final class PlayerViewModel: ObservableObject {
         // If already playing, pause - also stop synthesis
         if audioPlayer.isPlaying {
             audioPlayer.pause()
+            // Update isPaused state
+            isPaused = true
             // Cancel the synthesis task
             synthesisTask?.cancel()
             synthesisTask = nil
@@ -677,12 +679,14 @@ final class PlayerViewModel: ObservableObject {
             // If we have audio files loaded, just resume
             if audioPlayer.hasAudioFiles {
                 audioPlayer.play()
+                isPaused = false
                 NSLog("[PlayerVM] Resumed existing audio playback")
                 return
             }
             // If duration is set but hasAudioFiles is false, still try to resume
             if audioPlayer.duration > 0 {
                 audioPlayer.play()
+                isPaused = false
                 NSLog("[PlayerVM] Resumed audio with duration \(audioPlayer.duration)")
                 return
             }
@@ -701,6 +705,7 @@ final class PlayerViewModel: ObservableObject {
 
             if audioPlayer.hasAudioFiles {
                 audioPlayer.play()
+                isPaused = false
                 NSLog("[PlayerVM] Loaded and playing existing chunks")
                 return
             }
