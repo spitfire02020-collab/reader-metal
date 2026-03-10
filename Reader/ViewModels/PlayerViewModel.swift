@@ -948,6 +948,18 @@ final class PlayerViewModel: ObservableObject {
                 // Already synthesizing - might be interrupted, treat as resume
                 NSLog("[PlayerVM] Found synthesizing item, resuming...")
                 isResuming = true
+                // Load completed chunks into memory - resolve path in case of format migration
+                if let completedChunks = try? synthesisDB.getCompletedChunks(itemId: itemId) {
+                    for chunk in completedChunks {
+                        if let path = chunk.filePath {
+                            let resolvedPath = resolveChunkPath(oldPath: path, chunkIndex: chunk.chunkIndex)
+                            if let resolved = resolvedPath {
+                                item.generatedChunks[chunk.chunkIndex] = resolved
+                                NSLog("[PlayerVM] Resuming: loaded chunk \(chunk.chunkIndex) from resolved path: \(resolved)")
+                            }
+                        }
+                    }
+                }
             }
         }
 
