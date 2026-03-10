@@ -41,7 +41,7 @@ struct ChatterboxConfig {
     let numKVHeads: Int = 16
     let headDim: Int = 64
     let maxNewTokens: Int = 1500  // Sufficient for longer sentence chunks
-    let repetitionPenalty: Float = 2.0   // Further increased to reduce audio repetition
+    let repetitionPenalty: Float = 1.5  // Balanced between reference (1.2) and previous (2.0)
 
     // Generation parameters (matching server API)
     var seed: Int = 0                          // 0 = random, non-zero = reproducible
@@ -923,7 +923,7 @@ final class ChatterboxEngine: ObservableObject {
                 // Position of the next token to be generated
                 // After prefill  (step=0, |speechTokens|=1): next pos = totalSeqLen
                 // After decode k (step=k, |speechTokens|=k+1): next pos = totalSeqLen+k
-                let nextPos     = Int64(totalSeqLen + speechTokens.count - 1)
+                let nextPos     = Int64(totalSeqLen + speechTokens.count)
                 let nextMaskLen = totalSeqLen + speechTokens.count
                 let nextMask    = Array(repeating: Int64(1), count: nextMaskLen)
 

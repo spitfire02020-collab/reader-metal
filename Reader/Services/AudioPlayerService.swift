@@ -676,14 +676,14 @@ final class AudioPlayerService: NSObject, ObservableObject {
 
         do {
             let completedChunks = try synthesisDB.getCompletedChunks(itemId: itemID.uuidString)
-            let existingPaths = Set(audioFiles.map { $0.lastPathComponent })
+            let existingPaths = Set(audioFiles.map { $0.path })
 
             for chunk in completedChunks {
                 guard let filePath = chunk.filePath else { continue }
                 let chunkURL = URL(fileURLWithPath: filePath)
 
                 // Skip if already loaded
-                guard !existingPaths.contains(chunkURL.lastPathComponent) else { continue }
+                guard !existingPaths.contains(chunkURL.path) else { continue }
 
                 NSLog("[AudioPlayer] reloadPendingChunks: loading chunk \(chunk.chunkIndex)")
                 audioFiles.append(chunkURL)
