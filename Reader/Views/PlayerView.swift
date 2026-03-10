@@ -20,7 +20,7 @@ struct PlayerView: View {
     var onItemUpdate: ((LibraryItem) -> Void)?
 
     init(item: LibraryItem, onItemUpdate: ((LibraryItem) -> Void)? = nil) {
-        _viewModel = StateObject(wrappedValue: PlayerViewModel(item: item, onItemUpdate: onItemUpdate))
+        _viewModel = StateObject(wrappedValue: PlayerViewModel(item: item, audioPlayer: AudioPlayerService.shared, onItemUpdate: onItemUpdate))
     }
 
     var body: some View {
