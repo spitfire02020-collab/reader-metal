@@ -126,6 +126,55 @@ final class PlayerViewModel: ObservableObject {
         NSLog("[PlayerVM] loadExistingChunks: audioBaseDir exists=\(FileManager.default.fileExists(atPath: audioBaseDir.path))")
         NSLog("[PlayerVM] loadExistingChunks: chunkDir=\(dir.path)")
 
+        // Migration: Check for old flat directory files and migrate to subdirectory
+        let oldFlatDir = audioBaseDir
+        let itemId = item.id.uuidString
+
+        if FileManager.default.fileExists(atPath: oldFlatDir.path) {
+            // Check for old format files: {uuid}_part0.wav, {uuid}_part1.wav, etc.
+            do {
+                let oldFiles = try FileManager.default.contentsOfDirectory(at: oldFlatDir, includingPropertiesForKeys: nil)
+                let oldChunkFiles = oldFiles.filter { file in
+                    let name = file.deletingPathExtension().lastPathComponent
+                    return name.hasPrefix("\(itemId)_part")
+                }
+
+                if !oldChunkFiles.isEmpty {
+                    NSLog("[PlayerVM] loadExistingChunks: Found \(oldChunkFiles.count) old-format files, migrating to subdirectory")
+
+                    // Create subdirectory if needed
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+                    // Sort old files by index before migrating to ensure correct order
+                    let sortedOldFiles = oldChunkFiles.sorted { file1, file2 in
+                        let name1 = file1.deletingPathExtension().lastPathComponent
+                        let name2 = file2.deletingPathExtension().lastPathComponent
+                        let idx1 = name1.split(separator: "_").last?.replacingOccurrences(of: "part", with: "") ?? ""
+                        let idx2 = name2.split(separator: "_").last?.replacingOccurrences(of: "part", with: "") ?? ""
+                        return Int(idx1) ?? 0 < Int(idx2) ?? 0
+                    }
+
+                    // Migrate files to new location with new naming convention
+                    for oldFile in sortedOldFiles {
+                        // Extract index from old filename: {uuid}_part0.wav -> 0
+                        let name = oldFile.deletingPathExtension().lastPathComponent
+                        if let partIndex = name.split(separator: "_").last?.replacingOccurrences(of: "part", with: ""),
+                           let index = Int(partIndex) {
+                            let newFile = dir.appendingPathComponent("chunk_\(index).wav")
+
+                            // Only copy if destination doesn't exist
+                            if !FileManager.default.fileExists(atPath: newFile.path) {
+                                try FileManager.default.copyItem(at: oldFile, to: newFile)
+                                NSLog("[PlayerVM] loadExistingChunks: Migrated chunk \(index) to subdirectory")
+                            }
+                        }
+                    }
+                }
+            } catch {
+                NSLog("[PlayerVM] loadExistingChunks: Migration error: \(error)")
+            }
+        }
+
         guard FileManager.default.fileExists(atPath: dir.path) else {
             NSLog("[PlayerVM] loadExistingChunks: directory does not exist")
             return
@@ -564,13 +613,43 @@ final class PlayerViewModel: ObservableObject {
             return
         }
 
-        // If paused with audio loaded, resume playback only (don't re-synthesize)
-        if audioPlayer.currentTime > 0 && audioPlayer.duration > 0 {
-            audioPlayer.play()
-            return
+        // If paused with audio loaded (either playing was paused OR we have loaded audio), resume playback
+        // Check both duration > 0 and hasAudioFiles to handle all resume scenarios
+        if audioPlayer.duration > 0 || audioPlayer.hasAudioFiles {
+            // If we have audio files loaded, just resume
+            if audioPlayer.hasAudioFiles {
+                audioPlayer.play()
+                NSLog("[PlayerVM] Resumed existing audio playback")
+                return
+            }
+            // If duration is set but hasAudioFiles is false, still try to resume
+            if audioPlayer.duration > 0 {
+                audioPlayer.play()
+                NSLog("[PlayerVM] Resumed audio with duration \(audioPlayer.duration)")
+                return
+            }
+        }
+
+        // If we have existing generated chunks but they're not loaded, load and play them
+        if !item.generatedChunks.isEmpty {
+            // Try to load existing chunks
+            let sortedIndices = item.generatedChunks.keys.sorted()
+            for chunkIndex in sortedIndices {
+                guard let path = item.generatedChunks[chunkIndex],
+                      FileManager.default.fileExists(atPath: path) else { continue }
+                let url = URL(fileURLWithPath: path)
+                audioPlayer.loadChunk(url)
+            }
+
+            if audioPlayer.hasAudioFiles {
+                audioPlayer.play()
+                NSLog("[PlayerVM] Loaded and playing existing chunks")
+                return
+            }
         }
 
         // Otherwise start synthesis from beginning in a Task so we can cancel it later
+        NSLog("[PlayerVM] No existing audio/chunks found, starting fresh synthesis")
         synthesisTask = Task {
             await self.startSynthesisInternal()
         }
@@ -749,8 +828,9 @@ final class PlayerViewModel: ObservableObject {
         }
 
         // If chunks already exist (from generateOnly), play them
-        // Check both .ready and .processing status - if chunks exist, use them
-        if (!item.generatedChunks.isEmpty || audioPlayer.hasAudioFiles) && item.status != .pending {
+        // Don't require specific status - presence of chunks is sufficient
+        // (status may be .pending if app restarted during synthesis but chunks exist on disk)
+        if !item.generatedChunks.isEmpty || audioPlayer.hasAudioFiles {
             NSLog("[PlayerVM] Using existing chunks for playback, status=\(item.status.rawValue)")
             // loadExistingChunks was already called in init, just start playing
             if audioPlayer.hasAudioFiles {
@@ -758,7 +838,23 @@ final class PlayerViewModel: ObservableObject {
                 NSLog("[PlayerVM] Started playing chunks")
                 return
             } else {
-                NSLog("[PlayerVM] WARNING: chunks exist but audioPlayer.hasAudioFiles is false!")
+                // Chunks exist in item.generatedChunks but not loaded into audioPlayer
+                // Try to load them now - MUST sort by index to preserve playback order
+                NSLog("[PlayerVM] WARNING: chunks exist but audioPlayer.hasAudioFiles is false, attempting to load")
+                let sortedIndices = item.generatedChunks.keys.sorted()
+                for chunkIndex in sortedIndices {
+                    guard let path = item.generatedChunks[chunkIndex],
+                          FileManager.default.fileExists(atPath: path) else { continue }
+                    let url = URL(fileURLWithPath: path)
+                    audioPlayer.loadChunk(url)
+                    NSLog("[PlayerVM] Loaded chunk \(chunkIndex) from existing path")
+                }
+
+                if audioPlayer.hasAudioFiles {
+                    audioPlayer.play()
+                    NSLog("[PlayerVM] Started playing chunks after manual load")
+                    return
+                }
             }
         } else {
             NSLog("[PlayerVM] Cannot use chunks: status=\(item.status.rawValue), generatedChunks.isEmpty=\(item.generatedChunks.isEmpty), hasAudioFiles=\(audioPlayer.hasAudioFiles)")
@@ -846,11 +942,12 @@ final class PlayerViewModel: ObservableObject {
                 NSLog("[PlayerVM] Models already loaded")
             }
 
+            // Write chunks to subdirectory matching loadExistingChunks expectation
             let outputDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("Audio", isDirectory: true)
+                .appendingPathComponent("Audio/\(item.id.uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
-            let outputURL = outputDir.appendingPathComponent("\(item.id.uuidString).wav")
+            let outputURL = outputDir.appendingPathComponent("chunk.wav")
 
             // Get reference audio for voice cloning
             var refAudioURL: URL?
@@ -1470,11 +1567,12 @@ final class PlayerViewModel: ObservableObject {
                 NSLog("[PlayerVM] Models already loaded")
             }
 
+            // Write chunks to subdirectory matching loadExistingChunks expectation
             let outputDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("Audio", isDirectory: true)
+                .appendingPathComponent("Audio/\(item.id.uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
-            let outputURL = outputDir.appendingPathComponent("\(item.id.uuidString).wav")
+            let outputURL = outputDir.appendingPathComponent("chunk.wav")
 
             var refAudioURL: URL?
             if let path = selectedVoice.resolvedReferenceAudioPath {
