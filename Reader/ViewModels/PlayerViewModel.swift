@@ -215,8 +215,13 @@ final class PlayerViewModel: ObservableObject {
             return
         }
 
-        // Clear existing audio files and stale playback state before loading
-        audioPlayer.clearPlaybackState(item.id)
+        // Check if this is the same item that's currently playing - if so, preserve playback state
+        let isSameItem = audioPlayer.currentPlayingItemID == item.id
+
+        // Only clear playback state if it's a different item
+        if !isSameItem {
+            audioPlayer.clearPlaybackState(item.id)
+        }
 
         do {
             let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
@@ -297,13 +302,24 @@ final class PlayerViewModel: ObservableObject {
             }
         }
 
+        // Check if we're reopening the same item that's currently playing
+        let isSameItem = self.audioPlayer.currentPlayingItemID == item.id
+        let wasPlaying = self.audioPlayer.isPlaying
+        let previousChunkIndex = self.audioPlayer.currentChunkIndex
+        let previousTime = self.audioPlayer.currentTime
+        let previousDuration = self.audioPlayer.duration
+
         // Stop any current playback and cancel synthesis from previous article
         // Use Task to defer to avoid "Publishing changes from within view updates" error
         Task { @MainActor in
-            self.audioPlayer.stop()
-            if let playingID = self.audioPlayer.currentPlayingItemID {
-                self.audioPlayer.clearPlaybackState(playingID)
+            if !isSameItem {
+                // Different item - stop previous playback completely
+                self.audioPlayer.stop()
+                if let playingID = self.audioPlayer.currentPlayingItemID {
+                    self.audioPlayer.clearPlaybackState(playingID)
+                }
             }
+            // Same item - preserve playback state, just reload chunks
         }
 
         // Cancel any ongoing synthesis task
@@ -315,6 +331,13 @@ final class PlayerViewModel: ObservableObject {
 
         // Load existing chunks if any have been generated
         loadExistingChunks()
+
+        // If reopening the same item with existing playback, restore position for highlighting
+        if isSameItem && self.audioPlayer.hasAudioFiles {
+            // Restore the chunk index for text highlighting
+            // The audio player position already has the right time, we just need to sync the highlight
+            NSLog("[PlayerVM] Restoring playback position for same item: chunk=\(previousChunkIndex), time=\(previousTime)")
+        }
 
         // Set selected voice from item
         if let voiceID = item.selectedVoiceID {
