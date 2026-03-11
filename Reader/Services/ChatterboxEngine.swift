@@ -375,7 +375,7 @@ final class ChatterboxEngine: ObservableObject {
         let speakerCtx = speakerContext
         let chunkCount = chunks.count
         let configCopy = generationConfig
-        let maxConcurrent = 4  // Limit to prevent OOM
+        let maxConcurrent = 1  // Sequential processing to prevent OOM and ensure stable synthesis
 
         // Use Actor for thread-safe collection of audio results
         let audioResultsCollector = AudioResultsCollector()
