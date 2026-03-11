@@ -737,6 +737,10 @@ final class ChatterboxEngine: ObservableObject {
         }
 
         // ── Step 1: Tokenize text ──────────────────────────────────────────────
+        // Debug: Log truncated text to identify which chunks fail
+        let truncatedText = text.prefix(100)
+        chatterboxLogger.debug("CHUNK TEXT: \"\(truncatedText)\"...")
+
         let tokenIDs = tokenizer.encode(text)
         guard !tokenIDs.isEmpty else { return [] }
         let textSeqLen = tokenIDs.count
@@ -892,9 +896,32 @@ final class ChatterboxEngine: ObservableObject {
                 generatedToken = greedyNextToken(lastPosLogits, previous: generateTokens)
                 generateTokens.append(generatedToken)
 
-                // Log first few tokens for debugging (matches Python output format)
-                if step < 5 || step % 50 == 0 {
-                    chatterboxLogger.debug("step \(step): tok=\(generatedToken)")
+                // Log tokens for debugging repetition patterns
+                // Log more frequently in middle/end (steps 200-800) where issue occurs
+                let shouldLog = step < 10 || step % 20 == 0 || (step > 200 && step < 800)
+                if shouldLog {
+                    let logPos = totalSeqLen + speechTokens.count - 1
+                    chatterboxLogger.debug("step \(step): tok=\(generatedToken), pos=\(logPos)")
+                }
+
+                // Detect token repetition patterns (3-6 word sequences = ~6-18 tokens)
+                if speechTokens.count >= 6 {
+                    let recentTokens = Array(speechTokens.suffix(12))
+                    // Check for 3-token repeat (6 tokens back)
+                    if recentTokens.count >= 6 {
+                        let threeBack = speechTokens[speechTokens.count - 6]
+                        if generatedToken == threeBack {
+                            chatterboxLogger.warning("REPETITION DETECTED: token \(generatedToken) repeats 6 positions back at step \(step)")
+                        }
+                    }
+                    // Check for 6-token repeat pattern
+                    if recentTokens.count >= 12 {
+                        let last6 = Array(speechTokens.suffix(6))
+                        let prev6 = Array(speechTokens.dropLast(6).suffix(6))
+                        if last6 == prev6 {
+                            chatterboxLogger.warning("REPETITION PATTERN: 6-token sequence repeats at step \(step): \(last6)")
+                        }
+                    }
                 }
 
                 // Check for STOP_SPEECH BEFORE adding to speechTokens
@@ -921,11 +948,16 @@ final class ChatterboxEngine: ObservableObject {
                 }
 
                 // Position of the next token to be generated
-                // After prefill  (step=0, |speechTokens|=1): next pos = totalSeqLen
-                // After decode k (step=k, |speechTokens|=k+1): next pos = totalSeqLen+k
-                let nextPos     = Int64(totalSeqLen + speechTokens.count)
+                // After prefill  (step=0, |speechTokens|=1): next pos = totalSeqLen - 1 (becomes 0 at step 0)
+                // After decode k (step=k, |speechTokens|=k+1): next pos = totalSeqLen + k - 1
+                let nextPos     = Int64(totalSeqLen + speechTokens.count - 1)
                 let nextMaskLen = totalSeqLen + speechTokens.count
                 let nextMask    = Array(repeating: Int64(1), count: nextMaskLen)
+
+                // Debug: Log position IDs at key steps to verify they're correct at step 500+
+                if step == 100 || step == 300 || step == 500 || step == 700 || step == 900 {
+                    chatterboxLogger.debug("POSITION CHECK step \(step): nextPos=\(nextPos), maskLen=\(nextMaskLen), totalSeqLen=\(totalSeqLen)")
+                }
 
                 nextStepInputs = [
                     "inputs_embeds":  nextEmbed,
@@ -960,6 +992,20 @@ final class ChatterboxEngine: ObservableObject {
         // Matches reference: speech_tokens = generate_tokens[:, 1:-1] (no range filtering).
         let validSpeechTokens = speechTokens
         chatterboxLogger.debug("speech tokens: \(speechTokens.count) generated, first 10: \(speechTokens.prefix(10))")
+
+        // Debug: Analyze token distribution for repetition patterns
+        var tokenCounts: [Int: Int] = [:]
+        for tok in speechTokens {
+            tokenCounts[tok, default: 0] += 1
+        }
+        // Find most common tokens
+        let sortedTokens = tokenCounts.sorted { $0.value > $1.value }
+        if let topToken = sortedTokens.first, topToken.value > 5 {
+            chatterboxLogger.warning("REPEATED TOKEN: tok=\(topToken.key) appears \(topToken.value) times")
+        }
+        // Log token diversity (unique tokens / total tokens)
+        let diversity = Double(tokenCounts.count) / Double(max(speechTokens.count, 1))
+        chatterboxLogger.debug("token diversity: \(String(format: "%.2f", diversity)), unique=\(tokenCounts.count)/\(speechTokens.count)")
 
         // The f0_predictor/condnet uses Conv1d with "valid" (no-padding) convolutions.
         // With kernel_size k and input length N, output length = N - k + 1; if N < k the
@@ -1280,7 +1326,7 @@ final class ChatterboxEngine: ObservableObject {
         // For positive scores: divide by penalty (makes them less likely).
         // For negative scores: multiply by penalty (makes them more negative).
         var adj = logits
-        for token in Set(previous) {
+        for token in previous {
             guard token < adj.count else { continue }
             if adj[token] > 0 {
                 adj[token] /= config.repetitionPenalty
