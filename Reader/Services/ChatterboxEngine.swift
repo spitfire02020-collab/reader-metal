@@ -1078,6 +1078,23 @@ final class ChatterboxEngine: ObservableObject {
         chatterboxLogger.debug("decoder output: \(outInfo.shape)")
 
         var samples = try extractFloatArray(from: audioOutput)
+
+        // Debug: Check for audio repetition patterns in samples
+        let checkInterval = 4800  // Check every ~0.2 seconds
+        if samples.count > checkInterval * 2 {
+            let firstSegment = Array(samples[0..<checkInterval])
+            let secondSegment = Array(samples[checkInterval..<checkInterval*2])
+            // Simple comparison - count matching samples
+            var matches = 0
+            for i in 0..<min(firstSegment.count, secondSegment.count) {
+                if abs(firstSegment[i] - secondSegment[i]) < 0.001 { matches += 1 }
+            }
+            let matchRatio = Double(matches) / Double(checkInterval)
+            if matchRatio > 0.9 {
+                chatterboxLogger.warning("POTENTIAL AUDIO REPETITION: first 0.2s matches second 0.2s at \(matchRatio*100)%")
+            }
+        }
+
         chatterboxLogger.debug("CHUNK COMPLETE: \(validSpeechTokens.count) speech tokens generated, \(samples.count) audio samples")
         // Clip to [-1, 1] to prevent distortion — matches Python: np.clip(..., -1.0, 1.0)
         for i in samples.indices { samples[i] = max(-1, min(1, samples[i])) }
