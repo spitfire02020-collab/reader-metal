@@ -948,9 +948,9 @@ final class ChatterboxEngine: ObservableObject {
                 }
 
                 // Position of the next token to be generated
-                // After prefill  (step=0, |speechTokens|=1): next pos = totalSeqLen - 1 (becomes 0 at step 0)
-                // After decode k (step=k, |speechTokens|=k+1): next pos = totalSeqLen + k - 1
-                let nextPos     = Int64(totalSeqLen + speechTokens.count - 1)
+                // After prefill  (step=0, |speechTokens|=1): next pos = totalSeqLen
+                // After decode k (step=k, |speechTokens|=k+1): next pos = totalSeqLen + k
+                let nextPos     = Int64(totalSeqLen + speechTokens.count)
                 let nextMaskLen = totalSeqLen + speechTokens.count
                 let nextMask    = Array(repeating: Int64(1), count: nextMaskLen)
 
