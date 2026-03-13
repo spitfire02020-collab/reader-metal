@@ -1180,7 +1180,9 @@ final class ChatterboxEngine: ObservableObject {
 
     private func createInt64Tensor(_ data: [Int64], shape: [NSNumber]) throws -> ORTValue {
         let byteCount = data.count * MemoryLayout<Int64>.size
-        let mutableData = NSMutableData(bytes: data, length: byteCount)
+        let mutableData = data.withUnsafeBytes {
+            NSMutableData(bytes: $0.baseAddress!, length: byteCount)
+        }
         return try ORTValue(
             tensorData: mutableData,
             elementType: .int64,
