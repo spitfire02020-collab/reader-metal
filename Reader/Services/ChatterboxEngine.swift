@@ -739,7 +739,9 @@ final class ChatterboxEngine: ObservableObject {
         // ── Step 1: Tokenize text ──────────────────────────────────────────────
         // Debug: Log truncated text to identify which chunks fail
         let truncatedText = text.prefix(100)
-        chatterboxLogger.debug("CHUNK TEXT: \"\(truncatedText)\"...")
+        let commaCount = text.filter { $0 == "," }.count
+        let periodCount = text.filter { $0 == "." }.count
+        chatterboxLogger.debug("CHUNK TEXT: \"\(truncatedText)\"... (commas=\(commaCount), periods=\(periodCount), len=\(text.count))")
 
         let tokenIDs = tokenizer.encode(text)
         guard !tokenIDs.isEmpty else { return [] }
@@ -1076,6 +1078,7 @@ final class ChatterboxEngine: ObservableObject {
         chatterboxLogger.debug("decoder output: \(outInfo.shape)")
 
         var samples = try extractFloatArray(from: audioOutput)
+        chatterboxLogger.debug("CHUNK COMPLETE: \(validSpeechTokens.count) speech tokens generated, \(samples.count) audio samples")
         // Clip to [-1, 1] to prevent distortion — matches Python: np.clip(..., -1.0, 1.0)
         for i in samples.indices { samples[i] = max(-1, min(1, samples[i])) }
         return samples
