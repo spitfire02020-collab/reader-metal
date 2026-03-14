@@ -41,7 +41,7 @@ struct ChatterboxConfig {
     let numKVHeads: Int = 16
     let headDim: Int = 64
     let maxNewTokens: Int = 1500  // Sufficient for longer sentence chunks
-    let repetitionPenalty: Float = 1.5  // Balanced between reference (1.2) and previous (2.0)
+    let repetitionPenalty: Float = 1.2  // Match Python reference exactly
 
     // Generation parameters (matching server API)
     var seed: Int = 0                          // 0 = random, non-zero = reproducible
