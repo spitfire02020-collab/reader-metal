@@ -44,6 +44,9 @@ final class AudioPlayerService: NSObject, ObservableObject {
     // Guard flag to prevent race condition between delegate and polling
     private var isTransitioningChapter = false
 
+    /// Active poll task — cancel-before-replace to prevent concurrent polls
+    private var pollTask: Task<Void, Never>? = nil
+
     /// Callback triggered when a new chunk starts playing - used for syncing text highlight
     var onChunkPlaybackStarted: ((Int) -> Void)?
 
@@ -368,15 +371,9 @@ final class AudioPlayerService: NSObject, ObservableObject {
         }
     }
 
-    /// Handle memory warning - release non-essential resources to free up memory
+    /// Handle memory warning - log but do NOT clear audioFiles (they are URLs, not data)
     @objc private func handleMemoryWarning() {
-        NSLog("[AudioPlayer] Memory warning received - releasing non-essential resources")
-
-        // Clear audio files to free memory (will be re-synthesized if needed)
-        audioFiles.removeAll()
-
-        // Note: We don't stop playback as that would be a worse user experience
-        NSLog("[AudioPlayer] Memory warning handled - resources released")
+        NSLog("[AudioPlayer] Memory warning received - audioFiles are URLs only, nothing to release")
     }
 
     // MARK: - Audio Engine Setup (for crossfade)
@@ -728,7 +725,8 @@ final class AudioPlayerService: NSObject, ObservableObject {
         }
         player.pause()
         isPlaying = false
-        isExpectingMoreChunks = false  // Reset flag when pausing
+        // Note: do NOT set isExpectingMoreChunks = false here.
+        // Pausing audio playback should not claim synthesis is complete.
         stopProgressUpdates()
         updateNowPlayingInfo()
     }
@@ -941,92 +939,111 @@ extension AudioPlayerService: AVAudioPlayerDelegate {
                 NSLog("[AudioPlayer] delegate: calling nextChapter() - should advance from \(currentIndex)")
                 self.nextChapter()
             } else if expectingMore {
-                // No more chunks currently but synthesis is still going
-                // Wait and poll for new chunks by checking the database
-                NSLog("[AudioPlayer] delegate: no more chunks yet, waiting for synthesis...")
-                // Don't set isPlaying = false here! We'll resume playback when next chunk arrives
+                // No more chunks currently but synthesis may still be going
+                // Use database to check, not the in-memory flag
+                let remaining = self.getRemainingChunkCount()
+                NSLog("[AudioPlayer] delegate: no more chunks yet, remaining in DB=\(remaining)")
 
-                // Run polling in background to not block MainActor
-                Task.detached { [weak self] in
-                    guard let self = self else { return }
-                    await self.pollForNewChunks()
+                if remaining > 0 || expectingMore {
+                    NSLog("[AudioPlayer] delegate: waiting for synthesis (remaining=\(remaining))...")
+                    // Cancel any previous poll before starting a new one
+                    self.pollTask?.cancel()
+                    self.pollTask = Task.detached { [weak self] in
+                        guard let self = self else { return }
+                        await self.pollForNewChunks()
+                    }
+                } else {
+                    // No more chunks and synthesis complete - stop
+                    NSLog("[AudioPlayer] delegate: playback complete, stopping")
+                    self.isPlaying = false
                 }
-            } else {
-                // No more chunks and synthesis complete - stop
-                NSLog("[AudioPlayer] delegate: playback complete, stopping")
-                self.isPlaying = false
             }
         }
     }
 
-    /// Polls for new chunks in background without blocking MainActor
+    /// Polls for new chunks in background without blocking MainActor.
+    /// Uses the database as the source of truth for chunk availability.
+    /// Only one poll task should be active at a time (enforced by cancel-before-replace in delegate).
     private func pollForNewChunks() async {
         var previousChunkCount = self.getCompletedChunkCount()
 
-        NSLog("[AudioPlayer] pollForNewChunks: starting background polling")
+        NSLog("[AudioPlayer] pollForNewChunks: starting DB-driven polling (completed=\(previousChunkCount))")
 
-        // Poll for new chunks arriving by checking database
         for iteration in 0..<ChunkPolling.maxIterations {
-            try? await Task.sleep(nanoseconds: ChunkPolling.sleepIntervalNs)
-
-            let newChunkCount = self.getCompletedChunkCount()
-            let newExpectingMore = self.isExpectingMoreChunks
-
-            NSLog("[AudioPlayer] pollForNewChunks[\(iteration)]: generated=\(newChunkCount), expectingMore=\(newExpectingMore)")
-
-            // Check if new chunks were generated
-            if newChunkCount > previousChunkCount {
-                NSLog("[AudioPlayer] pollForNewChunks: new chunk generated! count \(previousChunkCount) -> \(newChunkCount)")
-                previousChunkCount = newChunkCount
-
-                // Append any newly generated chunks to audio player on MainActor
-                await MainActor.run {
-                    self.reloadPendingChunks()
-
-                    // Check if we can advance to next chapter
-                    if self.currentChunkIndex + 1 < self.audioFiles.count {
-                        NSLog("[AudioPlayer] pollForNewChunks: advancing to next chapter")
-                        self.nextChapter()
-                        return
-                    }
-                }
-                continue
-            }
-
-            // Check if we can advance to next chapter
-            let currentNow = self.currentChunkIndex
-            if currentNow + 1 < self.audioFiles.count {
-                NSLog("[AudioPlayer] pollForNewChunks: advancing to next chapter")
-                await MainActor.run {
-                    self.nextChapter()
-                }
+            // Exit early if this poll was cancelled (another one replaced us)
+            if Task.isCancelled {
+                NSLog("[AudioPlayer] pollForNewChunks[\(iteration)]: cancelled, exiting")
                 return
             }
 
-            // Synthesis complete - stop waiting
-            if !newExpectingMore {
-                NSLog("[AudioPlayer] pollForNewChunks: synthesis done, no more chunks arriving")
-                break
+            try? await Task.sleep(nanoseconds: ChunkPolling.sleepIntervalNs)
+
+            if Task.isCancelled { return }
+
+            let newChunkCount = self.getCompletedChunkCount()
+            let remaining = self.getRemainingChunkCount()
+
+            NSLog("[AudioPlayer] pollForNewChunks[\(iteration)]: completed=\(newChunkCount), remaining=\(remaining)")
+
+            // New chunks arrived — reload and try to advance
+            if newChunkCount > previousChunkCount {
+                NSLog("[AudioPlayer] pollForNewChunks: new chunk! \(previousChunkCount)->\(newChunkCount)")
+                previousChunkCount = newChunkCount
+
+                let advanced = await MainActor.run { () -> Bool in
+                    self.reloadPendingChunks()
+                    if self.currentChunkIndex + 1 < self.audioFiles.count {
+                        NSLog("[AudioPlayer] pollForNewChunks: advancing to next chapter")
+                        self.nextChapter()
+                        return true
+                    }
+                    return false
+                }
+                if advanced { return }  // delegate will spawn a new poll if needed
+                continue
             }
 
-            previousChunkCount = newChunkCount
+            // Check if we can advance (chunks may have been appended by the callback)
+            let canAdvance = await MainActor.run {
+                self.currentChunkIndex + 1 < self.audioFiles.count
+            }
+            if canAdvance {
+                await MainActor.run { self.nextChapter() }
+                return
+            }
+
+            // Synthesis complete (DB says nothing remaining) — stop waiting
+            if remaining == 0 {
+                NSLog("[AudioPlayer] pollForNewChunks: DB says synthesis done (remaining=0)")
+                break
+            }
         }
 
-        // Final check after polling ends
-        let latestChunkCount = self.getCompletedChunkCount()
-        NSLog("[AudioPlayer] pollForNewChunks: final check - generated chunks=\(latestChunkCount)")
+        // Final check after loop exits (either break or maxIterations)
+        if Task.isCancelled { return }
 
         await MainActor.run {
-            // Check if we can advance to next chapter
+            self.reloadPendingChunks()
             if self.currentChunkIndex + 1 < self.audioFiles.count {
-                NSLog("[AudioPlayer] pollForNewChunks: chunks available, resuming")
+                NSLog("[AudioPlayer] pollForNewChunks: final check — chunks available, resuming")
                 self.nextChapter()
             } else {
-                // Synthesis done or timed out with no new chunks
-                self.isPlaying = false
-                self.isExpectingMoreChunks = false  // Reset state
-                self.stopProgressUpdates()
-                NSLog("[AudioPlayer] pollForNewChunks: Playback complete (after waiting)")
+                // Truly done or timed out
+                let remaining = self.getRemainingChunkCount()
+                if remaining == 0 {
+                    NSLog("[AudioPlayer] pollForNewChunks: playback complete")
+                    self.isPlaying = false
+                    self.stopProgressUpdates()
+                } else {
+                    // Timed out but synthesis still running — DON'T kill playback.
+                    // Restart the poll instead.
+                    NSLog("[AudioPlayer] pollForNewChunks: poll timed out but \(remaining) chunks remaining, restarting poll")
+                    self.pollTask?.cancel()
+                    self.pollTask = Task.detached { [weak self] in
+                        guard let self = self else { return }
+                        await self.pollForNewChunks()
+                    }
+                }
             }
         }
     }
