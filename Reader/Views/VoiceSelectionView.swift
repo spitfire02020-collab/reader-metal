@@ -795,25 +795,29 @@ struct VoiceSelectionView: View {
         }
     }
 
-    // MARK: - Custom Voice Persistence
+    // MARK: - Custom Voice Persistence (SQLite)
 
     private func loadCustomVoices() {
-        if let data = UserDefaults.standard.data(forKey: "custom_voices"),
-           let voices = try? JSONDecoder().decode([VoiceProfile].self, from: data) {
-            customVoices = voices
-        }
+        let synthesisDB = SynthesisDatabase.shared
+        // Migrate from UserDefaults on first load
+        try? synthesisDB.migrateCustomVoices()
+        customVoices = (try? synthesisDB.getAllCustomVoices()) ?? []
+    }
+
+    private func saveCustomVoice(_ voice: VoiceProfile) {
+        try? SynthesisDatabase.shared.insertCustomVoice(voice)
     }
 
     private func saveCustomVoices() {
-        if let data = try? JSONEncoder().encode(customVoices) {
-            UserDefaults.standard.set(data, forKey: "custom_voices")
+        for voice in customVoices {
+            saveCustomVoice(voice)
         }
     }
 
     private func deleteCustomVoice(_ voice: VoiceProfile) {
         // Remove from array
         customVoices.removeAll { $0.id == voice.id }
-        saveCustomVoices()
+        try? SynthesisDatabase.shared.deleteCustomVoice(id: voice.id)
 
         // Delete the audio file if it exists
         if let path = voice.referenceAudioPath {

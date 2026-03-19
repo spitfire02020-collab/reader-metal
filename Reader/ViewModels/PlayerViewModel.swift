@@ -362,9 +362,8 @@ final class PlayerViewModel: ObservableObject {
             if let voice = VoiceProfile.builtInVoices.first(where: { $0.id == voiceID }) {
                 selectedVoice = voice
             } else {
-                // Then check custom voices from UserDefaults
-                if let data = UserDefaults.standard.data(forKey: "custom_voices"),
-                   let customVoices = try? JSONDecoder().decode([VoiceProfile].self, from: data),
+                // Then check custom voices from SQLite
+                if let customVoices = try? SynthesisDatabase.shared.getAllCustomVoices(),
                    let voice = customVoices.first(where: { $0.id == voiceID }) {
                     selectedVoice = voice
                 } else {

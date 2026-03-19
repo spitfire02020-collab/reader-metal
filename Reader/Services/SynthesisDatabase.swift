@@ -64,6 +64,9 @@ final class SynthesisDatabase {
     // Tables
     private let synthesisItems = Table("synthesis_items")
     private let chunks = Table("chunks")
+    private let libraryItems = Table("library_items")
+    private let libraryChapters = Table("library_chapters")
+    private let customVoices = Table("custom_voices")
 
     // Synthesis Item columns
     private let siId = SQLite.Expression<String>("id")
@@ -92,6 +95,39 @@ final class SynthesisDatabase {
     private let chDurationSeconds = SQLite.Expression<Double?>("duration_seconds")
     private let chCreatedAt = SQLite.Expression<Double>("created_at")
     private let chUpdatedAt = SQLite.Expression<Double>("updated_at")
+
+    // Library Item columns
+    private let liId = SQLite.Expression<String>("id")
+    private let liTitle = SQLite.Expression<String>("title")
+    private let liAuthor = SQLite.Expression<String?>("author")
+    private let liSource = SQLite.Expression<String>("source")
+    private let liSourceURL = SQLite.Expression<String?>("source_url")
+    private let liCoverImage = SQLite.Expression<SQLite.Blob?>("cover_image")
+    private let liDateAdded = SQLite.Expression<Double>("date_added")
+    private let liLastPlayed = SQLite.Expression<Double?>("last_played")
+    private let liDuration = SQLite.Expression<Double?>("duration")
+    private let liCurrentPosition = SQLite.Expression<Double>("current_position")
+    private let liTextContent = SQLite.Expression<String>("text_content")
+    private let liSelectedVoiceId = SQLite.Expression<String?>("selected_voice_id")
+    private let liItemStatus = SQLite.Expression<String>("status")
+    private let liAudioFileURL = SQLite.Expression<String?>("audio_file_url")
+    private let liProgress = SQLite.Expression<Double>("progress")
+    private let liGeneratedChunks = SQLite.Expression<String?>("generated_chunks")
+
+    // Library Chapter columns
+    private let lcId = SQLite.Expression<String>("id")
+    private let lcItemId = SQLite.Expression<String>("item_id")
+    private let lcChapterIndex = SQLite.Expression<Int>("chapter_index")
+    private let lcTitle = SQLite.Expression<String>("title")
+    private let lcTextContent = SQLite.Expression<String>("text_content")
+    private let lcStartTime = SQLite.Expression<Double?>("start_time")
+    private let lcEndTime = SQLite.Expression<Double?>("end_time")
+    private let lcAudioFileURL = SQLite.Expression<String?>("audio_file_url")
+
+    // Custom Voice columns
+    private let cvId = SQLite.Expression<String>("id")
+    private let cvName = SQLite.Expression<String>("name")
+    private let cvData = SQLite.Expression<SQLite.Blob>("data")
 
     init() {
         do {
@@ -145,10 +181,53 @@ final class SynthesisDatabase {
         try db?.run(chunks.createIndex(chStatus, ifNotExists: true))
 
         // Composite indexes for common query patterns
-        // Query: filter(chItemId == itemId && chChunkIndex >= fromIndex)
         try db?.run(chunks.createIndex(chItemId, chChunkIndex, ifNotExists: true))
-        // Query: filter(chItemId == itemId && chStatus == completed)
         try db?.run(chunks.createIndex(chItemId, chStatus, ifNotExists: true))
+
+        // Library items table
+        try db?.run(libraryItems.create(ifNotExists: true) { t in
+            t.column(liId, primaryKey: true)
+            t.column(liTitle)
+            t.column(liAuthor)
+            t.column(liSource)
+            t.column(liSourceURL)
+            t.column(liCoverImage)
+            t.column(liDateAdded)
+            t.column(liLastPlayed)
+            t.column(liDuration)
+            t.column(liCurrentPosition, defaultValue: 0)
+            t.column(liTextContent)
+            t.column(liSelectedVoiceId)
+            t.column(liItemStatus, defaultValue: "pending")
+            t.column(liAudioFileURL)
+            t.column(liProgress, defaultValue: 0)
+            t.column(liGeneratedChunks)
+        })
+
+        // Library chapters table
+        try db?.run(libraryChapters.create(ifNotExists: true) { t in
+            t.column(lcId, primaryKey: true)
+            t.column(lcItemId)
+            t.column(lcChapterIndex)
+            t.column(lcTitle)
+            t.column(lcTextContent)
+            t.column(lcStartTime)
+            t.column(lcEndTime)
+            t.column(lcAudioFileURL)
+            t.unique(lcItemId, lcChapterIndex)
+        })
+
+        // Custom voices table
+        try db?.run(customVoices.create(ifNotExists: true) { t in
+            t.column(cvId, primaryKey: true)
+            t.column(cvName)
+            t.column(cvData)
+        })
+
+        // Library indexes
+        try db?.run(libraryItems.createIndex(liDateAdded, ifNotExists: true))
+        try db?.run(libraryItems.createIndex(liItemStatus, ifNotExists: true))
+        try db?.run(libraryChapters.createIndex(lcItemId, ifNotExists: true))
     }
 
     // MARK: - Synthesis Item Operations
@@ -498,5 +577,262 @@ final class SynthesisDatabase {
             .filter(chItemId == itemId && chStatus == ChunkStatus.failed.rawValue)
             .filter(chRetryCount < 3)
             .count)
+    }
+
+    // MARK: - Library Item Operations
+
+    /// Insert a new library item with its chapters
+    func insertLibraryItem(_ item: LibraryItem) throws {
+        guard let db else { return }
+
+        // Encode generatedChunks as JSON
+        let chunksJSON: String?
+        if !item.generatedChunks.isEmpty {
+            let data = try JSONEncoder().encode(item.generatedChunks)
+            chunksJSON = String(data: data, encoding: .utf8)
+        } else {
+            chunksJSON = nil
+        }
+
+        try db.transaction {
+            try db.run(libraryItems.insert(or: .replace,
+                liId <- item.id.uuidString,
+                liTitle <- item.title,
+                liAuthor <- item.author,
+                liSource <- item.source.rawValue,
+                liSourceURL <- item.sourceURL,
+                liCoverImage <- item.coverImageData.map { SQLite.Blob(bytes: [UInt8]($0)) },
+                liDateAdded <- item.dateAdded.timeIntervalSince1970,
+                liLastPlayed <- item.lastPlayed?.timeIntervalSince1970,
+                liDuration <- item.duration,
+                liCurrentPosition <- item.currentPosition,
+                liTextContent <- item.textContent,
+                liSelectedVoiceId <- item.selectedVoiceID,
+                liItemStatus <- item.status.rawValue,
+                liAudioFileURL <- item.audioFileURL,
+                liProgress <- item.progress,
+                liGeneratedChunks <- chunksJSON
+            ))
+
+            // Delete existing chapters for this item
+            try db.run(libraryChapters.filter(lcItemId == item.id.uuidString).delete())
+
+            // Insert chapters
+            for (index, chapter) in item.chapters.enumerated() {
+                try db.run(libraryChapters.insert(
+                    lcId <- chapter.id.uuidString,
+                    lcItemId <- item.id.uuidString,
+                    lcChapterIndex <- index,
+                    lcTitle <- chapter.title,
+                    lcTextContent <- chapter.textContent,
+                    lcStartTime <- chapter.startTime,
+                    lcEndTime <- chapter.endTime,
+                    lcAudioFileURL <- chapter.audioFileURL
+                ))
+            }
+        }
+    }
+
+    /// Get all library items with chapters
+    func getAllLibraryItems() throws -> [LibraryItem] {
+        guard let db else { return [] }
+
+        var items: [LibraryItem] = []
+        for row in try db.prepare(libraryItems.order(liDateAdded.desc)) {
+            let itemId = row[liId]
+
+            // Load chapters
+            let chapterRows = try db.prepare(
+                libraryChapters.filter(lcItemId == itemId).order(lcChapterIndex.asc)
+            )
+            let chapters = chapterRows.map { ch in
+                Chapter(
+                    id: UUID(uuidString: ch[lcId]) ?? UUID(),
+                    title: ch[lcTitle],
+                    textContent: ch[lcTextContent],
+                    startTime: ch[lcStartTime],
+                    endTime: ch[lcEndTime],
+                    audioFileURL: ch[lcAudioFileURL]
+                )
+            }
+
+            // Decode generatedChunks
+            var generatedChunks: [Int: String] = [:]
+            if let json = row[liGeneratedChunks],
+               let data = json.data(using: .utf8) {
+                generatedChunks = (try? JSONDecoder().decode([Int: String].self, from: data)) ?? [:]
+            }
+
+            let item = LibraryItem(
+                id: UUID(uuidString: itemId) ?? UUID(),
+                title: row[liTitle],
+                author: row[liAuthor],
+                source: ContentSource(rawValue: row[liSource]) ?? .text,
+                sourceURL: row[liSourceURL],
+                coverImageData: row[liCoverImage].map { Data($0.bytes) },
+                dateAdded: Date(timeIntervalSince1970: row[liDateAdded]),
+                lastPlayed: row[liLastPlayed].map { Date(timeIntervalSince1970: $0) },
+                duration: row[liDuration],
+                currentPosition: row[liCurrentPosition],
+                textContent: row[liTextContent],
+                chapters: chapters,
+                selectedVoiceID: row[liSelectedVoiceId],
+                status: ItemStatus(rawValue: row[liItemStatus]) ?? .pending,
+                audioFileURL: row[liAudioFileURL],
+                progress: row[liProgress],
+                generatedChunks: generatedChunks
+            )
+            items.append(item)
+        }
+        return items
+    }
+
+    /// Get a single library item by ID
+    func getLibraryItem(id: String) throws -> LibraryItem? {
+        guard let db else { return nil }
+
+        guard let row = try db.pluck(libraryItems.filter(liId == id)) else { return nil }
+        let itemId = row[liId]
+
+        let chapterRows = try db.prepare(
+            libraryChapters.filter(lcItemId == itemId).order(lcChapterIndex.asc)
+        )
+        let chapters = chapterRows.map { ch in
+            Chapter(
+                id: UUID(uuidString: ch[lcId]) ?? UUID(),
+                title: ch[lcTitle],
+                textContent: ch[lcTextContent],
+                startTime: ch[lcStartTime],
+                endTime: ch[lcEndTime],
+                audioFileURL: ch[lcAudioFileURL]
+            )
+        }
+
+        var generatedChunks: [Int: String] = [:]
+        if let json = row[liGeneratedChunks],
+           let data = json.data(using: .utf8) {
+            generatedChunks = (try? JSONDecoder().decode([Int: String].self, from: data)) ?? [:]
+        }
+
+        return LibraryItem(
+            id: UUID(uuidString: itemId) ?? UUID(),
+            title: row[liTitle],
+            author: row[liAuthor],
+            source: ContentSource(rawValue: row[liSource]) ?? .text,
+            sourceURL: row[liSourceURL],
+            coverImageData: row[liCoverImage].map { Data($0.bytes) },
+            dateAdded: Date(timeIntervalSince1970: row[liDateAdded]),
+            lastPlayed: row[liLastPlayed].map { Date(timeIntervalSince1970: $0) },
+            duration: row[liDuration],
+            currentPosition: row[liCurrentPosition],
+            textContent: row[liTextContent],
+            chapters: chapters,
+            selectedVoiceID: row[liSelectedVoiceId],
+            status: ItemStatus(rawValue: row[liItemStatus]) ?? .pending,
+            audioFileURL: row[liAudioFileURL],
+            progress: row[liProgress],
+            generatedChunks: generatedChunks
+        )
+    }
+
+    /// Update a library item (upsert)
+    func updateLibraryItem(_ item: LibraryItem) throws {
+        try insertLibraryItem(item) // uses INSERT OR REPLACE
+    }
+
+    /// Delete a library item and its chapters
+    func deleteLibraryItem(id: String) throws {
+        guard let db else { return }
+        try db.transaction {
+            try db.run(libraryChapters.filter(lcItemId == id).delete())
+            try db.run(libraryItems.filter(liId == id).delete())
+        }
+        NSLog("[SynthesisDB] Deleted library item \(id)")
+    }
+
+    /// Update just the status of a library item
+    func updateLibraryItemStatus(id: String, status: ItemStatus) throws {
+        try db?.run(libraryItems.filter(liId == id).update(
+            liItemStatus <- status.rawValue
+        ))
+    }
+
+    /// Update just the progress of a library item
+    func updateLibraryItemProgress(id: String, progress: Double) throws {
+        try db?.run(libraryItems.filter(liId == id).update(
+            liProgress <- progress
+        ))
+    }
+
+    /// Bulk migrate library items from legacy storage
+    func migrateLibraryItems(_ items: [LibraryItem]) throws {
+        guard let db else { return }
+        try db.transaction {
+            for item in items {
+                // Skip if already exists
+                let exists = try db.scalar(libraryItems.filter(liId == item.id.uuidString).count) > 0
+                if !exists {
+                    try insertLibraryItem(item)
+                }
+            }
+        }
+        NSLog("[SynthesisDB] Migrated \(items.count) library items to SQLite")
+    }
+
+    /// Check if library_items table has any data
+    func hasLibraryItems() throws -> Bool {
+        guard let db else { return false }
+        return try db.scalar(libraryItems.count) > 0
+    }
+
+    // MARK: - Custom Voice Operations
+
+    /// Insert or replace a custom voice (stores VoiceProfile as JSON blob)
+    func insertCustomVoice(_ voice: VoiceProfile) throws {
+        guard let db else { return }
+        let data = try JSONEncoder().encode(voice)
+        try db.run(customVoices.insert(or: .replace,
+            cvId <- voice.id,
+            cvName <- voice.name,
+            cvData <- SQLite.Blob(bytes: [UInt8](data))
+        ))
+    }
+
+    /// Get all custom voices
+    func getAllCustomVoices() throws -> [VoiceProfile] {
+        guard let db else { return [] }
+        var voices: [VoiceProfile] = []
+        for row in try db.prepare(customVoices) {
+            let data = Data(row[cvData].bytes)
+            if let voice = try? JSONDecoder().decode(VoiceProfile.self, from: data) {
+                voices.append(voice)
+            }
+        }
+        return voices
+    }
+
+    /// Delete a custom voice
+    func deleteCustomVoice(id: String) throws {
+        try db?.run(customVoices.filter(cvId == id).delete())
+    }
+
+    /// Migrate custom voices from UserDefaults
+    func migrateCustomVoices() throws {
+        guard let db else { return }
+        let key = "custom_voices"
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let voices = try? JSONDecoder().decode([VoiceProfile].self, from: data) else {
+            return
+        }
+        try db.transaction {
+            for voice in voices {
+                let exists = try db.scalar(customVoices.filter(cvId == voice.id).count) > 0
+                if !exists {
+                    try insertCustomVoice(voice)
+                }
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: key)
+        NSLog("[SynthesisDB] Migrated \(voices.count) custom voices to SQLite")
     }
 }

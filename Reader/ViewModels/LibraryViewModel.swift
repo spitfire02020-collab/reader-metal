@@ -14,18 +14,18 @@ final class LibraryViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var showError = false
 
+    private let synthesisDB = SynthesisDatabase.shared
+
     init() {
-        // Load library items on init
         loadLibrary()
     }
 
     private let extractor = WebContentExtractor()
     private let engine = ChatterboxEngine.shared
 
-    // Secure file storage path - uses iOS Data Protection
-    private var libraryFileURL: URL {
+    // Legacy file storage path (for migration only)
+    private var legacyLibraryFileURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        // Create directory if needed
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
         return appSupport.appendingPathComponent("library_protected.json")
     }
@@ -69,53 +69,91 @@ final class LibraryViewModel: ObservableObject {
         return result.sorted { ($0.lastPlayed ?? $0.dateAdded) > ($1.lastPlayed ?? $1.dateAdded) }
     }
 
-    // MARK: - Persistence
+    // MARK: - Persistence (SQLite)
 
-    /// Load library from secure file storage (protected by iOS Data Protection)
+    /// Load library items from SQLite database
     func loadLibrary() {
         do {
-            let data = try Data(contentsOf: libraryFileURL)
-            if let decoded = try? JSONDecoder().decode([LibraryItem].self, from: data) {
-                // Sanitize HTML entities in titles that may have been stored before entity decoding was in place
-                // Also reset .processing status to .pending (app was likely killed during generation)
-                items = decoded.map { item in
-                    guard item.title.contains("&") || item.status == .processing else { return item }
-                    var mutable = item
-                    mutable.title = item.title.decodedHTMLEntities
-                    // Reset processing status - generation was interrupted
-                    if mutable.status == .processing {
-                        mutable.status = .pending
-                    }
-                    return mutable
+            // Check if SQLite has data; if not, try migrating from legacy storage
+            let hasData = try synthesisDB.hasLibraryItems()
+            if !hasData {
+                migrateFromLegacyStorage()
+            }
+
+            items = try synthesisDB.getAllLibraryItems()
+
+            // Sanitize HTML entities and reset stale processing status
+            var needsUpdate = false
+            for i in items.indices {
+                if items[i].title.contains("&") {
+                    items[i].title = items[i].title.decodedHTMLEntities
+                    needsUpdate = true
+                }
+                if items[i].status == .processing {
+                    items[i].status = .pending
+                    needsUpdate = true
+                }
+            }
+            if needsUpdate {
+                for item in items {
+                    try? synthesisDB.updateLibraryItem(item)
                 }
             }
         } catch {
-            // File doesn't exist or can't be read - that's okay for first run
-            // Fall back to legacy UserDefaults storage for migration
-            loadFromUserDefaultsIfNeeded()
+            NSLog("[LibraryViewModel] Failed to load from SQLite: \(error)")
+            migrateFromLegacyStorage()
+            items = (try? synthesisDB.getAllLibraryItems()) ?? []
         }
     }
 
-    /// Save library to secure file storage (protected by iOS Data Protection)
-    func saveLibrary() {
+    /// Save a single library item to SQLite
+    func saveItem(_ item: LibraryItem) {
         do {
-            let data = try JSONEncoder().encode(items)
-            try data.write(to: libraryFileURL, options: [.atomic, .completeFileProtection])
+            try synthesisDB.updateLibraryItem(item)
         } catch {
-            NSLog("[LibraryViewModel] Failed to save library: \(error)")
+            NSLog("[LibraryViewModel] Failed to save item: \(error)")
         }
     }
 
-    /// Migrate from legacy UserDefaults storage
-    private func loadFromUserDefaultsIfNeeded() {
-        let legacyKey = "library_items"
-        if let data = UserDefaults.standard.data(forKey: legacyKey),
+    /// Save the full library (for bulk operations like reorder)
+    func saveLibrary() {
+        for item in items {
+            saveItem(item)
+        }
+    }
+
+    /// Migrate from legacy JSON file and/or UserDefaults
+    private func migrateFromLegacyStorage() {
+        var legacyItems: [LibraryItem] = []
+
+        // 1. Try JSON file (library_protected.json)
+        if let data = try? Data(contentsOf: legacyLibraryFileURL),
            let decoded = try? JSONDecoder().decode([LibraryItem].self, from: data) {
-            items = decoded
-            // Migrate to secure storage
-            saveLibrary()
-            // Remove legacy data
-            UserDefaults.standard.removeObject(forKey: legacyKey)
+            legacyItems = decoded
+            NSLog("[LibraryViewModel] Found \(decoded.count) items in legacy JSON file")
+        }
+
+        // 2. Try UserDefaults (oldest legacy path)
+        if legacyItems.isEmpty {
+            let legacyKey = "library_items"
+            if let data = UserDefaults.standard.data(forKey: legacyKey),
+               let decoded = try? JSONDecoder().decode([LibraryItem].self, from: data) {
+                legacyItems = decoded
+                NSLog("[LibraryViewModel] Found \(decoded.count) items in UserDefaults")
+                UserDefaults.standard.removeObject(forKey: legacyKey)
+            }
+        }
+
+        // 3. Migrate to SQLite
+        if !legacyItems.isEmpty {
+            do {
+                try synthesisDB.migrateLibraryItems(legacyItems)
+                // Clean up legacy JSON file after successful migration
+                try? FileManager.default.removeItem(at: legacyLibraryFileURL)
+                NSLog("[LibraryViewModel] Migration complete: \(legacyItems.count) items → SQLite")
+            } catch {
+                NSLog("[LibraryViewModel] Migration failed: \(error)")
+            }
         }
     }
 
@@ -123,7 +161,6 @@ final class LibraryViewModel: ObservableObject {
 
     func addFromURL(_ urlString: String) async {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Security: Validate URL scheme is http or https only
         guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
               (scheme == "http" || scheme == "https") else {
@@ -160,8 +197,8 @@ final class LibraryViewModel: ObservableObject {
                 progress: 0
             )
 
+            try synthesisDB.insertLibraryItem(item)
             items.insert(item, at: 0)
-            saveLibrary()
         } catch {
             errorMessage = error.localizedDescription
             showError = true
@@ -220,8 +257,8 @@ final class LibraryViewModel: ObservableObject {
                 progress: 0
             )
 
+            try synthesisDB.insertLibraryItem(item)
             items.insert(item, at: 0)
-            saveLibrary()
         } catch {
             errorMessage = error.localizedDescription
             showError = true
@@ -252,8 +289,12 @@ final class LibraryViewModel: ObservableObject {
             progress: 0
         )
 
+        do {
+            try synthesisDB.insertLibraryItem(item)
+        } catch {
+            NSLog("[LibraryViewModel] Failed to insert item: \(error)")
+        }
         items.insert(item, at: 0)
-        saveLibrary()
         showAddContent = false
     }
 
@@ -262,6 +303,7 @@ final class LibraryViewModel: ObservableObject {
     func synthesize(item: LibraryItem) async {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index].status = .processing
+        saveItem(items[index])
 
         do {
             if !engine.isLoaded {
@@ -280,7 +322,7 @@ final class LibraryViewModel: ObservableObject {
                 onProgress: { progress in
                     Task { @MainActor in
                         if let idx = self.items.firstIndex(where: { $0.id == item.id }) {
-                            self.items[idx].progress = progress * 0.5 // Synthesis is 50% of total
+                            self.items[idx].progress = progress * 0.5
                         }
                     }
                 }
@@ -288,9 +330,10 @@ final class LibraryViewModel: ObservableObject {
 
             items[index].audioFileURL = outputURL.path
             items[index].status = .ready
-            saveLibrary()
+            saveItem(items[index])
         } catch {
             items[index].status = .error
+            saveItem(items[index])
             errorMessage = "Synthesis failed: \(error.localizedDescription)"
             showError = true
         }
@@ -299,12 +342,15 @@ final class LibraryViewModel: ObservableObject {
     // MARK: - Delete Item
 
     func deleteItem(_ item: LibraryItem) {
-        // Clean up audio file
         if let audioPath = item.audioFileURL {
             try? FileManager.default.removeItem(atPath: audioPath)
         }
+        do {
+            try synthesisDB.deleteLibraryItem(id: item.id.uuidString)
+        } catch {
+            NSLog("[LibraryViewModel] Failed to delete item: \(error)")
+        }
         items.removeAll { $0.id == item.id }
-        saveLibrary()
     }
 
     func deleteItems(at offsets: IndexSet) {

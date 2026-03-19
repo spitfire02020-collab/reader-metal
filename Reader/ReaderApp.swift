@@ -28,22 +28,20 @@ struct ReaderApp: App {
         switch url.host {
         case "synthesize":
             Task { @MainActor in
-                let defaults = UserDefaults.standard
-                guard let data = defaults.data(forKey: "library_items"),
-                      var items = try? JSONDecoder().decode([LibraryItem].self, from: data),
-                      let firstPending = items.first(where: { $0.status == .pending }) else {
-                    NSLog("[Reader] synthesize: no pending items found")
-                    return
-                }
-                NSLog("[Reader] synthesize: starting for item '\(firstPending.title)'")
-                let vm = PlayerViewModel(item: firstPending)
-                await vm.startSynthesis()
-                NSLog("[Reader] synthesize: done, status=\(vm.item.status)")
-                if let idx = items.firstIndex(where: { $0.id == vm.item.id }) {
-                    items[idx] = vm.item
-                    if let encoded = try? JSONEncoder().encode(items) {
-                        defaults.set(encoded, forKey: "library_items")
+                let synthesisDB = SynthesisDatabase.shared
+                do {
+                    let items = try synthesisDB.getAllLibraryItems()
+                    guard let firstPending = items.first(where: { $0.status == .pending }) else {
+                        NSLog("[Reader] synthesize: no pending items found")
+                        return
                     }
+                    NSLog("[Reader] synthesize: starting for item '\(firstPending.title)'")
+                    let vm = PlayerViewModel(item: firstPending)
+                    await vm.startSynthesis()
+                    NSLog("[Reader] synthesize: done, status=\(vm.item.status)")
+                    try synthesisDB.updateLibraryItem(vm.item)
+                } catch {
+                    NSLog("[Reader] synthesize: error: \(error)")
                 }
             }
         default:
