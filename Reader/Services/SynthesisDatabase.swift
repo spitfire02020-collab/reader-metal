@@ -265,17 +265,19 @@ final class SynthesisDatabase {
             siUpdatedAt <- now
         ))
 
-        // Create chunk rows
-        for (index, textContent) in chunkTexts.enumerated() {
-            try db.run(chunks.insert(
-                chItemId <- id,
-                chChunkIndex <- index,
-                chTextContent <- textContent,
-                chStatus <- ChunkStatus.pending.rawValue,
-                chRetryCount <- 0,
-                chCreatedAt <- now,
-                chUpdatedAt <- now
-            ))
+        // Create chunk rows in a single transaction for performance
+        try db.transaction {
+            for (index, textContent) in chunkTexts.enumerated() {
+                try db.run(chunks.insert(
+                    chItemId <- id,
+                    chChunkIndex <- index,
+                    chTextContent <- textContent,
+                    chStatus <- ChunkStatus.pending.rawValue,
+                    chRetryCount <- 0,
+                    chCreatedAt <- now,
+                    chUpdatedAt <- now
+                ))
+            }
         }
 
         NSLog("[SynthesisDB] Created item \(id) with \(totalChunks) chunks")
@@ -511,6 +513,15 @@ final class SynthesisDatabase {
             chUpdatedAt <- now
         ))
         NSLog("[SynthesisDB] Chunk \(id) marked completed: \(filePath)")
+    }
+
+    /// Mark chunk as failed with error (by item ID and chunk index)
+    func markChunkFailed(itemId: String, chunkIndex: Int, error: String) throws {
+        guard let db else { return }
+        let query = chunks.filter(chItemId == itemId && chChunkIndex == chunkIndex)
+        guard let row = try db.pluck(query) else { return }
+        let chunkId = row[chId]
+        try markChunkFailed(id: chunkId, error: error)
     }
 
     /// Mark chunk as failed with error

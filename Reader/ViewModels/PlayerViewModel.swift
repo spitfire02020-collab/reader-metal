@@ -840,6 +840,13 @@ final class PlayerViewModel: ObservableObject {
                                 }
                                 
                                 Task { @MainActor in
+                                    // Verify physical file was successfully placed before declaring DB completion
+                                    guard FileManager.default.fileExists(atPath: finalURL.path) else {
+                                        NSLog("[PlayerVM] FATAL ERROR: Audio chunk was lost. File does not exist at \(finalURL.path)")
+                                        try? self.synthesisDB.markChunkFailed(itemId: itemId, chunkIndex: actualChunkIndex, error: "Filesystem write failed")
+                                        return
+                                    }
+
                                     // Save chunk paths to item
                                     self.item.generatedChunks[actualChunkIndex] = finalURL.path
                                     
@@ -898,6 +905,8 @@ final class PlayerViewModel: ObservableObject {
             NSLog("[PlayerVM] Error: \(error)")
             item.status = .error
             isStreamingAudio = false
+            let itemId = item.id.uuidString
+            try? synthesisDB.updateItemStatus(id: itemId, status: SynthesisItemStatus.error)
         }
 
         isSynthesizing = false
@@ -1230,6 +1239,13 @@ final class PlayerViewModel: ObservableObject {
 
                                 // Mark chunk as completed in database and update progress
                                 Task { @MainActor in
+                                    // Verify physical file exists before saving state
+                                    guard FileManager.default.fileExists(atPath: finalURL.path) else {
+                                        NSLog("[PlayerVM] FATAL ERROR: Audio chunk was lost. File does not exist at \(finalURL.path)")
+                                        try? self.synthesisDB.markChunkFailed(itemId: itemId, chunkIndex: actualChunkIndex, error: "Filesystem write failed")
+                                        return
+                                    }
+
                                     self.item.generatedChunks[actualChunkIndex] = finalURL.path
                                     try? self.synthesisDB.markChunkCompleted(
                                         itemId: itemId,
@@ -1300,6 +1316,7 @@ final class PlayerViewModel: ObservableObject {
             item.status = .error
             isStreamingAudio = false
             errorMessage = error.localizedDescription
+            try? synthesisDB.updateItemStatus(id: itemId, status: SynthesisItemStatus.error)
         }
 
         isSynthesizing = false
@@ -1424,6 +1441,7 @@ final class PlayerViewModel: ObservableObject {
             NSLog("[PlayerVM] generateOnly error: \(error)")
             errorMessage = error.localizedDescription
             item.status = .error
+            try? synthesisDB.updateItemStatus(id: item.id.uuidString, status: SynthesisItemStatus.error)
             // Clear synthesis progress on error
             audioPlayer.clearSynthesisProgress(item.id)
         }
