@@ -78,19 +78,17 @@ final class TextChunkerTests: XCTestCase {
 
     func testHandlesUnicodeCharacters() {
         let result = TextChunker.chunkText("Hello 世界! こんにちは!")
-        // NLTokenizer may treat this as 2 sentences (language-aware)
-        XCTAssertGreaterThanOrEqual(result.count, 1)
-        XCTAssertLessThanOrEqual(result.count, 3)
-        // All content should be preserved
-        let joined = result.joined(separator: " ")
-        XCTAssertTrue(joined.contains("世界"))
-        XCTAssertTrue(joined.contains("こんにちは"))
+        // NLTokenizer natively splits appropriately
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(result[0], "Hello 世界!")
+        XCTAssertEqual(result[1], "こんにちは!")
     }
 
     func testHandlesEmoji() {
         let result = TextChunker.chunkText("Hi 👋! Bye 👎!")
-        XCTAssertGreaterThanOrEqual(result.count, 1)
-        XCTAssertLessThanOrEqual(result.count, 2)
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(result[0], "Hi 👋!")
+        XCTAssertEqual(result[1], "Bye 👎!")
     }
 
     // MARK: - Quote Handling
@@ -157,7 +155,23 @@ final class TextChunkerTests: XCTestCase {
 
     func testNumberedList() {
         let result = TextChunker.chunkText("1. First item. 2. Second item.")
-        XCTAssertGreaterThanOrEqual(result.count, 1)
-        // NLTokenizer treats numbered periods contextually
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(result[0], "1. First item.")
+        XCTAssertEqual(result[1], "2. Second item.")
+    }
+
+    func testBulletPoints() {
+        let text = """
+        Here is a list:
+        - First item
+        - Second item
+        End of list.
+        """
+        let result = TextChunker.chunkText(text)
+        XCTAssertEqual(result.count, 4)
+        XCTAssertEqual(result[0], "Here is a list:")
+        XCTAssertEqual(result[1], "- First item")
+        XCTAssertEqual(result[2], "- Second item")
+        XCTAssertEqual(result[3], "End of list.")
     }
 }

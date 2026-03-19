@@ -5,21 +5,21 @@ Replace `TextChunker.splitByPunctuation()` and `splitIntoSentences()` with Apple
 
 ## Tasks
 
-- [ ] **1. Add `import NaturalLanguage`** to `TextChunker.swift` → Verify: file compiles
-- [ ] **2. Rewrite `splitIntoSentences()`** to use `NLTokenizer(.sentence)`, remove `splitByPunctuation()`, remove `splitBulletPointText()`, remove `splitLongSentence()`, remove the `abbreviations` set and `bulletPointPattern` regex → Verify: all 19 existing tests pass
-- [ ] **3. Handle bullet points** inside the new `splitIntoSentences()` — `NLTokenizer` treats each bullet as a sentence naturally, so verify with a new test case → Verify: new test passes
-- [ ] **4. Add new edge-case tests** covering known weaknesses of the old parser:
+- [x] **1. Add `import NaturalLanguage`** to `TextChunker.swift` → Verify: file compiles
+- [x] **2. Rewrite `splitIntoSentences()`** to use `NLTokenizer(.sentence)`, remove `splitByPunctuation()`, remove `splitBulletPointText()`, remove `splitLongSentence()`, remove the `abbreviations` set and `bulletPointPattern` regex → Verify: all 19 existing tests pass
+- [x] **3. Handle bullet points** inside the new `splitIntoSentences()` — `NLTokenizer` treats each bullet as a sentence naturally, so verify with a new test case → Verify: new test passes
+- [x] **4. Add new edge-case tests** covering known weaknesses of the old parser:
   - Abbreviations mid-sentence: `"Dr. Smith said Mr. Jones arrived."`
   - Ellipsis: `"Wait... What happened? I don't know."`
   - Unicode sentence boundaries: `"Ciao! ¿Cómo estás? Bien."`
   - Numbered list: `"1. First item 2. Second item"`
   → Verify: new tests pass
-- [ ] **5. Run full test suite** → Verify: `xcodebuild test` exits 0
+- [x] **5. Run full test suite** → Verify: `xcodebuild test` exits 0
 
 ## Done When
-- [ ] `splitByPunctuation`, `splitBulletPointText`, `splitLongSentence`, `abbreviations`, `bulletPointPattern` are all deleted
-- [ ] All 19 existing tests + 4 new tests pass
-- [ ] No changes to the public API (`chunkText`, `cleanTextForDisplay`, `estimateDuration`, `estimateTotalDuration`)
+- [x] `splitByPunctuation`, `splitBulletPointText`, `splitLongSentence`, `abbreviations`, `bulletPointPattern` are all deleted
+- [x] All 19 existing tests + 4 new tests pass
+- [x] No changes to the public API (`chunkText`, `cleanTextForDisplay`, `estimateDuration`, `estimateTotalDuration`)
 
 ## Notes
 - `NLTokenizer` handles abbreviations, Unicode, quotes, and bullet lists out of the box — it replaces ~170 lines of hand-rolled parsing with ~15 lines.

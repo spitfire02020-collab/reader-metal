@@ -6,12 +6,6 @@ import NaturalLanguage
 // Based on Chatterbox-TTS-Server's intelligent sentence-based chunking
 
 final class TextChunker {
-    /// Target characters per chunk (0 = no limit, sentences only)
-    static let targetChunkSize = 0  // Each sentence is a chunk
-
-    /// Minimum characters to avoid tiny fragments
-    static let minChunkSize = 100
-
     // MARK: - Non-verbal Cue Handling
 
     /// Pattern for non-verbal cues like (laughs), (sighs), (coughs), etc.
@@ -32,19 +26,25 @@ final class TextChunker {
     /// Maximum number of entries in the cache to prevent unbounded memory growth
     private static let maxCacheEntries = 100
 
-    /// Simple cache for chunkText results to avoid repeated regex processing
+    /// Simple cache for chunkText results
     private static var chunkCache: [String: [String]] = [:]
+    
+    /// Array to track insertion order for proper FIFO eviction
+    private static var cacheKeys: [String] = []
+    
     private static let cacheQueue = DispatchQueue(label: "com.reader.textchunker.cache", attributes: .concurrent)
 
-    /// Evict oldest entries when cache exceeds max size (simple LRU approximation)
-    /// Must be called within cacheQueue
+    /// Evict oldest entries when cache exceeds max size (proper FIFO)
+    /// Must be called within cacheQueue with barrier
     private static func evictCacheIfNeeded() {
         if chunkCache.count >= maxCacheEntries {
-            // Remove oldest 20% of entries (approximation - dict order is insertion-order in modern Swift)
-            let keysToRemove = Array(chunkCache.keys.prefix(maxCacheEntries / 5))
+            // Remove oldest 20% of entries using our tracking array
+            let removeCount = maxCacheEntries / 5
+            let keysToRemove = cacheKeys.prefix(removeCount)
             for key in keysToRemove {
                 chunkCache.removeValue(forKey: key)
             }
+            cacheKeys.removeFirst(removeCount)
         }
     }
 
@@ -75,8 +75,11 @@ final class TextChunker {
         // Cache the result
         // Use barrier for thread-safe write
         cacheQueue.async(flags: .barrier) {
-            evictCacheIfNeeded()
-            chunkCache[text] = result
+            if chunkCache[text] == nil {
+                evictCacheIfNeeded()
+                cacheKeys.append(text)
+                chunkCache[text] = result
+            }
         }
 
         return result

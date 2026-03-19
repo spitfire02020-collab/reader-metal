@@ -298,47 +298,6 @@ final class LibraryViewModel: ObservableObject {
         showAddContent = false
     }
 
-    // MARK: - Synthesize Item
-
-    func synthesize(item: LibraryItem) async {
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-        items[index].status = .processing
-        saveItem(items[index])
-
-        do {
-            if !engine.isLoaded {
-                try await engine.loadModels()
-            }
-
-            let outputDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("Audio", isDirectory: true)
-            try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-
-            let outputURL = outputDir.appendingPathComponent("\(item.id.uuidString).wav")
-
-            try await engine.synthesize(
-                text: item.textContent,
-                outputURL: outputURL,
-                onProgress: { progress in
-                    Task { @MainActor in
-                        if let idx = self.items.firstIndex(where: { $0.id == item.id }) {
-                            self.items[idx].progress = progress * 0.5
-                        }
-                    }
-                }
-            )
-
-            items[index].audioFileURL = outputURL.path
-            items[index].status = .ready
-            saveItem(items[index])
-        } catch {
-            items[index].status = .error
-            saveItem(items[index])
-            errorMessage = "Synthesis failed: \(error.localizedDescription)"
-            showError = true
-        }
-    }
-
     // MARK: - Delete Item
 
     func deleteItem(_ item: LibraryItem) {

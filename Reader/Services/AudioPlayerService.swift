@@ -772,17 +772,47 @@ final class AudioPlayerService: NSObject, ObservableObject {
         stopProgressUpdates()
     }
 
-    func seek(to time: TimeInterval) {
-        let clampedTime = max(0, min(time, duration))
-        audioPlayer?.currentTime = clampedTime
-        currentTime = clampedTime
-        progress = duration > 0 ? clampedTime / duration : 0
+    func seek(to globalTime: TimeInterval) {
+        let maxTime = totalActualDuration
+        let clampedTime = max(0, min(globalTime, maxTime))
+        
+        // Find which chunk this global time falls into
+        var accumulated: TimeInterval = 0
+        var targetIndex = 0
+        
+        for (index, chunkDur) in chunkDurations.enumerated() {
+            if accumulated + chunkDur > clampedTime {
+                targetIndex = index
+                break
+            }
+            accumulated += chunkDur
+            targetIndex = index // Fallback to last chunk if exactly at end
+        }
+        
+        let localTimeInChunk = max(0, clampedTime - accumulated)
+        
+        if targetIndex != currentChunkIndex || audioPlayer == nil {
+            // Need to load a different chunk
+            let wasPlaying = isPlaying
+            goToChapter(targetIndex)
+            audioPlayer?.currentTime = localTimeInChunk
+            if wasPlaying && audioPlayer?.isPlaying == false {
+                audioPlayer?.play()
+            }
+        } else {
+            // Same chunk, just seek
+            audioPlayer?.currentTime = localTimeInChunk
+        }
+        
+        currentTime = localTimeInChunk
+        duration = maxTime
+        progress = maxTime > 0 ? clampedTime / maxTime : 0
         updateNowPlayingInfo()
     }
 
     func seekToProgress(_ value: Double) {
-        let time = value * duration
-        seek(to: time)
+        let globalTime = value * totalActualDuration
+        seek(to: globalTime)
     }
 
     func skipForward(seconds: TimeInterval = 15) {
@@ -883,8 +913,12 @@ final class AudioPlayerService: NSObject, ObservableObject {
     @objc private func updateProgress() {
         guard let player = audioPlayer else { return }
         currentTime = player.currentTime
-        duration = player.duration
-        progress = duration > 0 ? currentTime / duration : 0
+        // Maintain global duration instead of overwriting with single chunk duration
+        let maxTime = totalActualDuration
+        duration = maxTime > 0 ? maxTime : player.duration
+        
+        let globalCurrentTime = cumulativeDurationUpToChunk(currentChunkIndex) + currentTime
+        progress = duration > 0 ? globalCurrentTime / duration : 0
     }
 
     // MARK: - Now Playing Info

@@ -788,58 +788,116 @@ final class PlayerViewModel: ObservableObject {
                 refAudioURL = URL(fileURLWithPath: path)
             }
 
-            // Pre-generate ALL chunks first to build up a queue
-            var allChunkURLs: [URL] = []
-
             // Pass pre-chunked text to avoid rechunking which can cause boundary mismatches
             let chunksToSynthesize = Array(textChunks[chunkIndex...])
 
-            try await engine.synthesize(
-                text: "",  // Not used when preChunkedText is provided
-                preChunkedText: chunksToSynthesize,
-                referenceAudioURL: refAudioURL,
-                outputURL: outputURL,
-                onChunkReady: { chunkURL in
-                    allChunkURLs.append(chunkURL)
-                },
-                onProgress: { [weak self] progress in
-                    self?.synthesisProgress = progress
-                },
-                seed: synthesisSettings.seed,
-                exaggeration: Float(synthesisSettings.exaggeration),
-                cfgWeight: Float(synthesisSettings.cfgWeight),
-                speedFactor: Float(synthesisSettings.speed)
-            )
+            audioPlayer.setCurrentItemID(item.id)
+            audioPlayer.isExpectingMoreChunks = true
 
-            // Save chunk paths to item
-            for (index, url) in allChunkURLs.enumerated() {
-                item.generatedChunks[chunkIndex + index] = url.path
+            // Use actor-like isolation with a class wrapper to track first chunk
+            class ChunkTracker: @unchecked Sendable {
+                var firstURL: URL? = nil
             }
+            let tracker = ChunkTracker()
 
-            NSLog("[PlayerVM] All \(allChunkURLs.count) chunks ready, starting playback")
+            let itemTitle = item.title
+            let itemArtist = item.displayAuthor
+            let itemId = item.id.uuidString
 
-            // Play all chunks - start with first, append rest
-            if let firstURL = allChunkURLs.first {
-                audioPlayer.startStreaming(
-                    firstChunkURL: firstURL,
-                    title: item.title,
-                    artist: item.displayAuthor
+            try await Task.detached(priority: .userInitiated) { [weak self] in
+                guard let self = self else { return }
+                let engine = self.engine
+                let audioPlayer = self.audioPlayer
+
+                try await engine.synthesize(
+                    text: "",  // Not used when preChunkedText is provided
+                    preChunkedText: chunksToSynthesize,
+                    referenceAudioURL: refAudioURL,
+                    outputURL: outputURL,
+                    onChunkReady: { [weak self] chunkURL in
+                        guard let self = self else { return }
+                        NSLog("[PlayerVM] onChunkReady callback received: \(chunkURL.lastPathComponent)")
+
+                        // Extract chunk index from filename (format: uuid_part0.wav)
+                        let filename = chunkURL.deletingPathExtension().lastPathComponent
+                        if let partRange = filename.range(of: "_part") {
+                            let indexStr = String(filename[partRange.upperBound...])
+                            if let generatedIndex = Int(indexStr) {
+                                let actualChunkIndex = chunkIndex + generatedIndex
+                                
+                                // Rename the file to standard format so it can be found later
+                                let finalURL = chunkURL.deletingLastPathComponent().appendingPathComponent("chunk_\(actualChunkIndex).wav")
+                                do {
+                                    if FileManager.default.fileExists(atPath: finalURL.path) {
+                                        try FileManager.default.removeItem(at: finalURL)
+                                    }
+                                    try FileManager.default.moveItem(at: chunkURL, to: finalURL)
+                                    NSLog("[PlayerVM] Moved chunk to final path: \(finalURL.lastPathComponent)")
+                                } catch {
+                                    NSLog("[PlayerVM] Failed to move chunk: \(error)")
+                                    // Fallback if renaming fails
+                                    try? FileManager.default.copyItem(at: chunkURL, to: finalURL)
+                                }
+                                
+                                Task { @MainActor in
+                                    // Save chunk paths to item
+                                    self.item.generatedChunks[actualChunkIndex] = finalURL.path
+                                    
+                                    // Mark chunk as completed in database
+                                    try? self.synthesisDB.markChunkCompleted(
+                                        itemId: itemId,
+                                        chunkIndex: actualChunkIndex,
+                                        filePath: finalURL.path,
+                                        duration: nil
+                                    )
+                                    try? self.synthesisDB.updateItemProgress(id: itemId)
+                                    if let progress = try? self.synthesisDB.getProgress(itemId: itemId) {
+                                        self.synthesisProgress = progress
+                                    }
+                                }
+
+                                Task { @MainActor in
+                                    if tracker.firstURL == nil {
+                                        tracker.firstURL = finalURL
+                                        NSLog("[PlayerVM] First chunk, starting streaming playback from index \(chunkIndex)")
+                                        audioPlayer.startStreaming(
+                                            firstChunkURL: finalURL,
+                                            title: itemTitle,
+                                            artist: itemArtist
+                                        )
+                                        self.isStreamingAudio = true
+                                    } else {
+                                        NSLog("[PlayerVM] Appending chunk to stream")
+                                        audioPlayer.appendStreamChunk(finalURL)
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    onProgress: { [weak self] progress in
+                        Task { @MainActor in
+                            self?.synthesisProgress = progress
+                        }
+                    },
+                    seed: synthesisSettings.seed,
+                    exaggeration: Float(synthesisSettings.exaggeration),
+                    cfgWeight: Float(synthesisSettings.cfgWeight),
+                    speedFactor: Float(synthesisSettings.speed)
                 )
+            }.value
 
-                // Queue up remaining chunks
-                for url in allChunkURLs.dropFirst() {
-                    audioPlayer.appendStreamChunk(url)
-                }
-
-                // All chunks are ready - no more expected
-                audioPlayer.isExpectingMoreChunks = false
-
-                isStreamingAudio = true
-            }
+            NSLog("[PlayerVM] Synthesis from chunk \(chunkIndex) complete")
+            audioPlayer.isExpectingMoreChunks = false
+            item.audioFileURL = nil // Clear single file URL to force chunk usage
+            item.status = .ready
+            onItemUpdate?(item)
+            isStreamingAudio = false
 
         } catch {
             errorMessage = error.localizedDescription
             NSLog("[PlayerVM] Error: \(error)")
+            item.status = .error
+            isStreamingAudio = false
         }
 
         isSynthesizing = false
@@ -1081,6 +1139,7 @@ final class PlayerViewModel: ObservableObject {
 
             // Skip already completed chunks - filter text to only include missing chunks
             var chunksToSynthesize: [String] = []
+            var missingIndices: [Int] = []
             let allChunks = TextChunker.chunkText(item.textContent)
 
             for (index, chunk) in allChunks.enumerated() {
@@ -1090,6 +1149,7 @@ final class PlayerViewModel: ObservableObject {
                     continue
                 }
                 chunksToSynthesize.append(chunk)
+                missingIndices.append(index)
             }
 
             // If all chunks exist, skip synthesis
@@ -1152,13 +1212,29 @@ final class PlayerViewModel: ObservableObject {
                         let filename = chunkURL.deletingPathExtension().lastPathComponent
                         if let partRange = filename.range(of: "_part") {
                             let indexStr = String(filename[partRange.upperBound...])
-                            if let chunkIndex = Int(indexStr) {
+                            if let generatedIndex = Int(indexStr), generatedIndex < missingIndices.count {
+                                let actualChunkIndex = missingIndices[generatedIndex]
+                                
+                                // Rename the file to actualChunkIndex so it can be re-loaded
+                                let finalURL = chunkURL.deletingLastPathComponent().appendingPathComponent("chunk_\(actualChunkIndex).wav")
+                                do {
+                                    if FileManager.default.fileExists(atPath: finalURL.path) {
+                                        try FileManager.default.removeItem(at: finalURL)
+                                    }
+                                    try FileManager.default.moveItem(at: chunkURL, to: finalURL)
+                                    NSLog("[PlayerVM] Moved chunk to final path: \(finalURL.lastPathComponent)")
+                                } catch {
+                                    NSLog("[PlayerVM] Failed to move chunk: \(error)")
+                                    try? FileManager.default.copyItem(at: chunkURL, to: finalURL)
+                                }
+
                                 // Mark chunk as completed in database and update progress
                                 Task { @MainActor in
+                                    self.item.generatedChunks[actualChunkIndex] = finalURL.path
                                     try? self.synthesisDB.markChunkCompleted(
                                         itemId: itemId,
-                                        chunkIndex: chunkIndex,
-                                        filePath: chunkURL.path,
+                                        chunkIndex: actualChunkIndex,
+                                        filePath: finalURL.path,
                                         duration: nil
                                     )
                                     try? self.synthesisDB.updateItemProgress(id: itemId)
@@ -1166,25 +1242,31 @@ final class PlayerViewModel: ObservableObject {
                                         self.synthesisProgress = progress
                                     }
                                 }
-                            }
-                        }
 
-                        // All UI updates must be dispatched to main actor
-                        Task { @MainActor in
-                            if tracker.firstURL == nil {
-                                // First chunk: start streaming playback
-                                tracker.firstURL = chunkURL
-                                NSLog("[PlayerVM] First chunk, starting streaming playback")
-                                self.audioPlayer.startStreaming(
-                                    firstChunkURL: chunkURL,
-                                    title: itemTitle,
-                                    artist: itemArtist
-                                )
-                                self.isStreamingAudio = true
-                            } else {
-                                // Subsequent chunks: append to stream
-                                NSLog("[PlayerVM] Appending chunk to stream")
-                                self.audioPlayer.appendStreamChunk(chunkURL)
+                                // All UI updates must be dispatched to main actor
+                                Task { @MainActor in
+                                    if audioPlayer.hasAudioFiles {
+                                        // We already preloaded existing chunks, just append!
+                                        NSLog("[PlayerVM] Appending chunk to existing stream")
+                                        audioPlayer.appendStreamChunk(finalURL)
+                                    } else {
+                                        if tracker.firstURL == nil {
+                                            // First chunk: start streaming playback
+                                            tracker.firstURL = finalURL
+                                            NSLog("[PlayerVM] First chunk, starting streaming playback")
+                                            audioPlayer.startStreaming(
+                                                firstChunkURL: finalURL,
+                                                title: itemTitle,
+                                                artist: itemArtist
+                                            )
+                                            self.isStreamingAudio = true
+                                        } else {
+                                            // Subsequent chunks: append to stream
+                                            NSLog("[PlayerVM] Appending chunk to stream")
+                                            audioPlayer.appendStreamChunk(finalURL)
+                                        }
+                                    }
+                                }
                             }
                         }
                     },
@@ -1207,21 +1289,11 @@ final class PlayerViewModel: ObservableObject {
             try? synthesisDB.updateItemStatus(id: itemId, status: SynthesisItemStatus.completed)
 
             audioPlayer.isExpectingMoreChunks = false
-            item.audioFileURL = outputURL.path
+            item.audioFileURL = nil // Clear single file URL to force chunk usage
             item.status = .ready
             // Save library with generated chunks so they persist across app restarts
             onItemUpdate?(item)
             isStreamingAudio = false
-
-            // If the player finished the streaming chunks while we were synthesizing,
-            // load the full file so seek/waveform work correctly.
-            if !audioPlayer.isPlaying {
-                audioPlayer.loadAudio(
-                    url: outputURL,
-                    title: item.title,
-                    artist: item.displayAuthor
-                )
-            }
 
         } catch {
             NSLog("[PlayerVM] Synthesis error: \(error)")

@@ -266,7 +266,12 @@ struct LibraryView: View {
         .contextMenu {
             if item.status == .pending {
                 Button {
-                    Task { await viewModel.synthesize(item: item) }
+                    audioPlayer.startPlayingItem(item.id)
+                    NotificationCenter.default.post(
+                        name: .startGenerationFromLibrary,
+                        object: nil,
+                        userInfo: ["item": item]
+                    )
                 } label: {
                     Label("Generate Audio", systemImage: "waveform")
                 }
