@@ -88,6 +88,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
     /// Called when restarting synthesis with new voice/preset
     func clearAudioFiles() {
         audioFiles.removeAll()
+        chunkDurations.removeAll()
         // Reset all playback state to avoid stale state causing issues
         duration = 0
         currentTime = 0
@@ -211,7 +212,20 @@ final class AudioPlayerService: NSObject, ObservableObject {
     private var audioPlayer: AVAudioPlayer?
     private var displayLink: CADisplayLink?
     private var audioFiles: [URL] = []
+    private(set) var chunkDurations: [TimeInterval] = []
     private var chapterTimestamps: [(start: TimeInterval, end: TimeInterval)] = []
+
+    /// Cumulative duration of all chunks before the given index
+    func cumulativeDurationUpToChunk(_ index: Int) -> TimeInterval {
+        guard index > 0, !chunkDurations.isEmpty else { return 0 }
+        let end = min(index, chunkDurations.count)
+        return chunkDurations[..<end].reduce(0, +)
+    }
+
+    /// Total actual audio duration across all loaded chunks
+    var totalActualDuration: TimeInterval {
+        chunkDurations.reduce(0, +)
+    }
 
     // Now Playing info
     private var nowPlayingTitle: String = ""
@@ -552,6 +566,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
         nowPlayingArtist = artist
         nowPlayingImage = coverImage
         audioFiles = [url]
+        chunkDurations = []
         chapterTimestamps = []
 
         do {
@@ -582,6 +597,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
                 audioPlayer?.delegate = self
                 audioPlayer?.prepareToPlay()
                 duration = audioPlayer?.duration ?? 0
+                chunkDurations = [duration]
             } catch {
                 audioLogger.error("Failed to load chunk: \(error.localizedDescription)")
             }
@@ -593,6 +609,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
                 let audioFile = try AVAudioFile(forReading: url)
                 let fileDuration = Double(audioFile.length) / audioFile.fileFormat.sampleRate
                 duration += fileDuration
+                chunkDurations.append(fileDuration)
             } catch {
                 audioLogger.error("Failed to get chunk duration: \(error.localizedDescription)")
             }
@@ -623,6 +640,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
         nowPlayingArtist = artist
         nowPlayingImage  = nil
         audioFiles       = [firstChunkURL]
+        chunkDurations   = []
         chapterTimestamps = []
         currentChunkIndex = 0
         isExpectingMoreChunks = true  // Will be set to false after all chunks appended
@@ -637,6 +655,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
             audioPlayer?.enableRate = true
             audioPlayer?.rate = playbackRate
             duration    = audioPlayer?.duration ?? 0
+            chunkDurations = [duration]
             currentTime = 0
             progress    = 0
             updateNowPlayingInfo()
@@ -660,6 +679,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
             let audioFile = try AVAudioFile(forReading: url)
             let fileDuration = Double(audioFile.length) / audioFile.fileFormat.sampleRate
             duration += fileDuration
+            chunkDurations.append(fileDuration)
             NSLog("[AudioPlayer] Updated total duration: \(duration)")
         } catch {
             audioLogger.error("Failed to get chunk duration: \(error.localizedDescription)")
@@ -689,6 +709,7 @@ final class AudioPlayerService: NSObject, ObservableObject {
                 if let player = try? AVAudioPlayer(contentsOf: chunkURL) {
                     player.prepareToPlay()
                     duration += player.duration
+                    chunkDurations.append(player.duration)
                 }
             }
 

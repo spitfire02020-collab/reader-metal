@@ -48,10 +48,13 @@ final class PlayerViewModel: ObservableObject {
     private let downloadService: ModelDownloadService
     private let synthesisDB: SynthesisDatabase
 
-    /// Total duration - always use estimated full duration, not cumulative chunk duration
+    /// Total duration — uses actual audio duration once fully synthesized, otherwise estimated
     var totalDuration: TimeInterval {
-        // Always use estimated duration from full text, not the cumulative chunk duration
-        // The audioPlayer.duration only contains chunks that have been generated so far
+        // Once all chunks are synthesized and loaded, use actual cumulative audio duration
+        if !isSynthesizing && audioPlayer.totalActualDuration > 0 && !audioPlayer.chunkDurations.isEmpty {
+            return audioPlayer.totalActualDuration
+        }
+        // During synthesis or before chunks load, use text-based estimate
         return item.duration ?? TextChunker.estimateTotalDuration(for: item.textContent)
     }
 
@@ -63,33 +66,28 @@ final class PlayerViewModel: ObservableObject {
     /// Text to display in player - shows "current / total" when playing
     var totalDurationText: String {
         if audioPlayer.duration > 0 && audioPlayer.isPlaying {
-            // Show current position / total when playing
-            return "\(audioPlayer.formattedCurrentTime) / \(formattedTotalDuration)"
+            // Show elapsed time (cumulative + current chunk) / total
+            let elapsed = audioPlayer.cumulativeDurationUpToChunk(audioPlayer.currentChunkIndex) + audioPlayer.currentTime
+            return "\(formatTime(elapsed)) / \(formattedTotalDuration)"
         }
         return formattedTotalDuration
     }
 
-    /// Playback progress based on total estimated duration (not just loaded chunks)
+    /// Playback progress based on actual cumulative chunk durations
     var playbackProgress: Double {
         if isSynthesizing {
             // Show synthesis progress when generating
             return synthesisProgress
         }
-        // Calculate progress based on total estimated duration
-        // Need to account for: current time in current chunk + duration of all completed chunks
-        let totalEst = totalDuration
-        guard totalEst > 0 else { return 0 }
+        let total = totalDuration
+        guard total > 0 else { return 0 }
 
-        // Get the total played duration (current chunk time + all previous chunks)
+        // Use actual cumulative chunk durations when available
+        let completedChunksTime = audioPlayer.cumulativeDurationUpToChunk(audioPlayer.currentChunkIndex)
         let currentTimeInChunk = audioPlayer.currentTime
-        let currentChunkIdx = audioPlayer.currentChunkIndex
 
-        // Calculate completed chunks duration (approximate based on average chunk duration)
-        let avgChunkDuration = totalEst / Double(textChunks.count)
-        let completedChunksTime = Double(currentChunkIdx) * avgChunkDuration
-
-        let totalPlayedTime = currentTimeInChunk + completedChunksTime
-        return min(1.0, totalPlayedTime / totalEst)
+        let totalPlayedTime = completedChunksTime + currentTimeInChunk
+        return min(1.0, totalPlayedTime / total)
     }
 
     private func formatTime(_ time: TimeInterval) -> String {
