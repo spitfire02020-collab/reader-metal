@@ -760,7 +760,7 @@ final class PlayerViewModel: ObservableObject {
             return
         }
 
-        downloadService.checkModelAvailability()
+        await downloadService.checkModelAvailability()
         guard downloadService.isModelReady else {
             showModelDownload = true
             return
@@ -967,7 +967,7 @@ final class PlayerViewModel: ObservableObject {
         }
 
         // Check if models are downloaded first
-        downloadService.checkModelAvailability()
+        await downloadService.checkModelAvailability()
         guard downloadService.isModelReady else {
             NSLog("[PlayerVM] Models not ready, showing download")
             showModelDownload = true
@@ -1269,7 +1269,7 @@ final class PlayerViewModel: ObservableObject {
         }
 
         // Check if models are available
-        downloadService.checkModelAvailability()
+        await downloadService.checkModelAvailability()
         guard downloadService.isModelReady else {
             NSLog("[PlayerVM] Models not ready")
             showModelDownload = true
@@ -1426,7 +1426,7 @@ final class PlayerViewModel: ObservableObject {
         guard !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         // Check if models are available
-        downloadService.checkModelAvailability()
+        await downloadService.checkModelAvailability()
         guard downloadService.isModelReady else {
             errorMessage = "Please download the voice model first"
             showModelDownload = true
@@ -1566,7 +1566,7 @@ final class PlayerViewModel: ObservableObject {
     private func playSelectionOnly(_ text: String) async {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
-        downloadService.checkModelAvailability()
+        await downloadService.checkModelAvailability()
         guard downloadService.isModelReady else {
             errorMessage = "Please download the voice model first"
             showModelDownload = true
@@ -1670,7 +1670,7 @@ final class PlayerViewModel: ObservableObject {
         isStreamingAudio = false
 
         // Check if models are available
-        downloadService.checkModelAvailability()
+        await downloadService.checkModelAvailability()
         guard downloadService.isModelReady else {
             errorMessage = "Please download the voice model first"
             showModelDownload = true

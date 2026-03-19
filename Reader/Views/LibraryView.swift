@@ -134,7 +134,7 @@ struct LibraryView: View {
                 viewModel.loadLibrary()
             }
             .task {
-                await downloadService.checkModelAvailabilityAsync()
+                await downloadService.checkModelAvailability()
             }
         }
         .preferredColorScheme(.dark)

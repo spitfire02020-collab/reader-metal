@@ -264,10 +264,8 @@ final class ModelDownloadService: NSObject, ObservableObject {
             try? FileManager.default.copyItem(atPath: tokenizerSrc, toPath: tokenizerDst)
         }
 
-        // Update on main actor
-        await MainActor.run {
-            self.checkModelAvailability()
-        }
+        // Update model availability
+        await checkModelAvailability()
     }
 
     func modelPath(for component: ModelComponent, variant: ModelVariant = .q4f16) -> URL {
@@ -317,103 +315,45 @@ final class ModelDownloadService: NSObject, ObservableObject {
 
     // MARK: - Status Check
 
-    /// Async version of checkModelAvailability that runs file checks on background thread
-    func checkModelAvailabilityAsync(variant: ModelVariant = .q4f16) async {
-        // Run on background to avoid blocking UI - simplified approach
-        Task.detached(priority: .background) { [weak self] in
-            guard let self = self else { return }
-            // Do file checks on background
-            await self.performBackgroundCheck(variant: variant)
-        }
-    }
+    /// Check if all required model files are present.
+    /// File I/O runs on a background thread; UI state is updated on MainActor.
+    func checkModelAvailability(variant: ModelVariant = .q4f16) async {
+        // Capture paths on MainActor before going to background
+        let components = ModelComponent.allCases
+        let modelPaths = components.map { modelPath(for: $0, variant: variant) }
+        let dataPaths  = components.map { modelDataPath(for: $0, variant: variant) }
+        let tokPath    = tokenizerPath
+        let bundleDir  = bundleModelsDirectory
 
-    /// Background check that updates main actor state
-    private func performBackgroundCheck(variant: ModelVariant) async {
-        let bundleDir = Bundle.main.bundleURL
-        let bundleFiles = (try? FileManager.default.contentsOfDirectory(atPath: bundleDir.path)) ?? []
-        let onnxFiles = bundleFiles.filter { $0.hasSuffix(".onnx") }
+        // File checks on background thread
+        let ready: Bool = await Task.detached(priority: .utility) {
+            var missingFiles: [String] = []
 
-        NSLog("[ModelDownload] checkModelAvailabilityAsync: bundle has \(onnxFiles.count) ONNX files")
-
-        await MainActor.run {
-            self.isModelReady = !onnxFiles.isEmpty
-            NSLog("[ModelDownload] checkModelAvailabilityAsync: isModelReady=\(self.isModelReady)")
-        }
-    }
-
-    /// Actual model availability check implementation
-    private func performModelAvailabilityCheck(variant: ModelVariant = .q4f16) {
-        NSLog("[ModelDownload] checkModelAvailabilityAsync: starting background check")
-
-        // Check each model component
-        var missingFiles: [String] = []
-        for component in ModelComponent.allCases {
-            let modelPathURL = self.modelPath(for: component, variant: variant)
-            let dataPathURL = self.modelDataPath(for: component, variant: variant)
-
-            let modelExists = FileManager.default.fileExists(atPath: modelPathURL.path)
-            let dataExists = FileManager.default.fileExists(atPath: dataPathURL.path)
-
-            NSLog("[ModelDownload] checkModelAvailabilityAsync: \(component.rawValue) model exists=\(modelExists), data exists=\(dataExists)")
-
-            if !modelExists {
-                missingFiles.append(modelPathURL.lastPathComponent)
+            for (i, component) in components.enumerated() {
+                let modelExists = FileManager.default.fileExists(atPath: modelPaths[i].path)
+                let dataExists  = FileManager.default.fileExists(atPath: dataPaths[i].path)
+                NSLog("[ModelDownload] checkModelAvailability: \(component.rawValue) model=\(modelPaths[i].lastPathComponent) exists=\(modelExists), data=\(dataPaths[i].lastPathComponent) exists=\(dataExists)")
+                if !modelExists { missingFiles.append(modelPaths[i].lastPathComponent) }
+                if !dataExists  { missingFiles.append(dataPaths[i].lastPathComponent) }
             }
-            if !dataExists {
-                missingFiles.append(dataPathURL.lastPathComponent)
+
+            let tokenizerExists = FileManager.default.fileExists(atPath: tokPath.path)
+            NSLog("[ModelDownload] checkModelAvailability: tokenizer exists=\(tokenizerExists)")
+
+            let bundleFiles = (try? FileManager.default.contentsOfDirectory(atPath: bundleDir.path)) ?? []
+            let onnxFiles = bundleFiles.filter { $0.hasSuffix(".onnx") }
+            NSLog("[ModelDownload] checkModelAvailability: bundle has \(onnxFiles.count) ONNX files")
+
+            let allPresent = zip(modelPaths, dataPaths).allSatisfy { model, data in
+                FileManager.default.fileExists(atPath: model.path) &&
+                FileManager.default.fileExists(atPath: data.path)
             }
-        }
 
-        let tokenizerExists = FileManager.default.fileExists(atPath: self.tokenizerPath.path)
-        NSLog("[ModelDownload] checkModelAvailabilityAsync: tokenizer exists=\(tokenizerExists)")
+            // Ready if downloaded models + tokenizer present, OR bundle has ONNX files
+            return (allPresent && tokenizerExists) || !onnxFiles.isEmpty
+        }.value
 
-        // Check bundle for ONNX files (lightweight - just log presence)
-        let bundleFiles = (try? FileManager.default.contentsOfDirectory(atPath: self.bundleModelsDirectory.path)) ?? []
-        let onnxFiles = bundleFiles.filter { $0.hasSuffix(".onnx") }
-        NSLog("[ModelDownload] checkModelAvailabilityAsync: bundle has \(onnxFiles.count) ONNX files")
-
-        // Determine if models are ready (can use bundle files)
-        let allPresent = ModelComponent.allCases.allSatisfy { component in
-            FileManager.default.fileExists(atPath: self.modelPath(for: component, variant: variant).path) &&
-            FileManager.default.fileExists(atPath: self.modelDataPath(for: component, variant: variant).path)
-        }
-
-        self.isModelReady = allPresent || !onnxFiles.isEmpty  // Ready if we have bundle models
-        NSLog("[ModelDownload] checkModelAvailabilityAsync: isModelReady=\(self.isModelReady)")
-    }
-
-    func checkModelAvailability(variant: ModelVariant = .q4f16) {
-        // Check each model component
-        var missingFiles: [String] = []
-        for component in ModelComponent.allCases {
-            let modelPathURL = modelPath(for: component, variant: variant)
-            let dataPathURL = modelDataPath(for: component, variant: variant)
-
-            let modelExists = FileManager.default.fileExists(atPath: modelPathURL.path)
-            let dataExists = FileManager.default.fileExists(atPath: dataPathURL.path)
-
-            NSLog("[ModelDownload] checkModelAvailability: \(component.rawValue) model=\(modelPathURL.lastPathComponent) exists=\(modelExists), data=\(dataPathURL.lastPathComponent) exists=\(dataExists)")
-
-            if !modelExists {
-                missingFiles.append(modelPathURL.lastPathComponent)
-            }
-            if !dataExists {
-                missingFiles.append(dataPathURL.lastPathComponent)
-            }
-        }
-
-        let tokenizerExists = FileManager.default.fileExists(atPath: tokenizerPath.path)
-        NSLog("[ModelDownload] checkModelAvailability: tokenizer exists=\(tokenizerExists), path=\(tokenizerPath.lastPathComponent)")
-
-        // Also check what files exist in bundle
-        let bundleFiles = (try? FileManager.default.contentsOfDirectory(atPath: bundleModelsDirectory.path)) ?? []
-        NSLog("[ModelDownload] checkModelAvailability: bundle contains ONNX files: \(bundleFiles.filter { $0.hasSuffix(".onnx") })")
-
-        let allPresent = ModelComponent.allCases.allSatisfy { component in
-            FileManager.default.fileExists(atPath: modelPath(for: component, variant: variant).path) &&
-            FileManager.default.fileExists(atPath: modelDataPath(for: component, variant: variant).path)
-        }
-        isModelReady = allPresent && tokenizerExists
+        self.isModelReady = ready
         NSLog("[ModelDownload] checkModelAvailability: isModelReady=\(isModelReady)")
     }
 
@@ -436,7 +376,7 @@ final class ModelDownloadService: NSObject, ObservableObject {
         isCancelled = false
 
         // Check if models are bundled - if so, skip download
-        checkModelAvailability(variant: variant)
+        await checkModelAvailability(variant: variant)
         if isModelReady {
             NSLog("[ModelDownload] Models bundled, skipping download")
             return

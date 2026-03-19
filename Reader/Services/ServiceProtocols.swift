@@ -45,7 +45,7 @@ protocol ModelDownloadProtocol: AnyObject {
     var isModelReady: Bool { get }
     var downloadProgress: Double { get }
 
-    func checkModelAvailability()
+    func checkModelAvailability() async
     func downloadModels(progress: @escaping (Double) -> Void) async throws
 }
 
