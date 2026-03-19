@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 // MARK: - Text Chunker
 // Splits long text into optimal chunks for TTS synthesis
@@ -167,191 +168,30 @@ final class TextChunker {
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Sentence Splitting
+    // MARK: - Sentence Splitting (NLTokenizer)
 
-    /// Abbreviations that should NOT end a sentence
-    private static let abbreviations: Set<String> = [
-        "mr", "mrs", "ms", "dr", "prof", "rev", "hon", "st",
-        "sgt", "capt", "lt", "col", "gen", "etc", "eg", "ie",
-        "vs", "approx", "apt", "dept", "fig", "gov", "inc",
-        "jr", "sr", "ltd", "no", "p", "pp", "vol", "op",
-        "cit", "ca", "cf", "ed", "esp", "et", "al", "ibid",
-        "id", "inf", "sup", "viz", "sc", "fl", "d", "b",
-        "r", "c", "v", "u", "s", "a", "m", "p", "d",
-        "bc", "ad", "rn", "bsn", "md", "do", "dds", "dmd"
-    ]
-
-    /// Pattern for bullet points
-    private static let bulletPointPattern = try! NSRegularExpression(
-        pattern: "(?:^|\\n)\\s*([-•*]|\\d+\\.)\\s+",
-        options: []
-    )
-
+    /// Split text into sentences using Apple's NLTokenizer for robust,
+    /// linguistically-aware boundary detection. Handles abbreviations,
+    /// Unicode, quotes, bullet points, and ellipsis out of the box.
     private static func splitIntoSentences(_ text: String) -> [String] {
-        // Handle bullet points first - treat each bullet as a segment
-        let range = NSRange(text.startIndex..., in: text)
-        let bulletMatches = bulletPointPattern.matches(in: text, options: [], range: range)
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
 
-        if !bulletMatches.isEmpty {
-            return splitBulletPointText(text, matches: bulletMatches)
-        }
-
-        return splitByPunctuation(text)
-    }
-
-    /// Split text with bullet points, preserving list formatting
-    private static func splitBulletPointText(_ text: String, matches: [NSTextCheckingResult]) -> [String] {
         var sentences: [String] = []
-        var currentPosition = text.startIndex
-
-        for (index, match) in matches.enumerated() {
-            guard let range = Range(match.range, in: text) else { continue }
-
-            // Process text before this bullet
-            let beforeBullet = String(text[currentPosition..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !beforeBullet.isEmpty {
-                sentences.append(contentsOf: splitByPunctuation(beforeBullet))
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            let sentence = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty {
+                sentences.append(sentence)
             }
-
-            // Process this bullet item
-            let nextStart: String.Index
-            if index + 1 < matches.count {
-                if let nextRange = Range(matches[index + 1].range, in: text) {
-                    nextStart = nextRange.lowerBound
-                } else {
-                    nextStart = text.endIndex
-                }
-            } else {
-                nextStart = text.endIndex
-            }
-
-            let bulletItem = String(text[range.lowerBound..<nextStart]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !bulletItem.isEmpty {
-                sentences.append(bulletItem)
-            }
-
-            currentPosition = range.upperBound
+            return true
         }
 
-        // Process remaining text after last bullet
-        if currentPosition < text.endIndex {
-            let remaining = String(text[currentPosition...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !remaining.isEmpty {
-                sentences.append(contentsOf: splitByPunctuation(remaining))
-            }
-        }
-
-        return sentences
-    }
-
-    /// Split text by punctuation marks (. ! ?)
-    private static func splitByPunctuation(_ text: String) -> [String] {
-        var sentences: [String] = []
-        var currentSentence = ""
-        var insideQuotes = false  // Track quote state as we build the sentence
-
-        let chars = Array(text)
-        var i = 0
-
-        while i < chars.count {
-            let char = chars[i]
-
-            switch char {
-            case "\"":
-                // Toggle quote state when we encounter a quote
-                insideQuotes = !insideQuotes
-                currentSentence.append(char)
-
-            case "'":
-                currentSentence.append(char)
-
-            case ",":
-                // Commas never split sentences - just append
-                currentSentence.append(char)
-                i += 1
-                continue
-
-            case ".", "!", "?":
-                currentSentence.append(char)
-
-                // Check if next non-whitespace char is a closing quote
-                var j = i + 1
-                while j < chars.count && chars[j].isWhitespace { j += 1 }
-                let nextNonSpace: String.Element? = j < chars.count ? chars[j] : nil
-                let nextIsQuote = nextNonSpace == "\""
-
-                // Don't split if inside quotes without closing quote
-                if insideQuotes && !nextIsQuote {
-                    i += 1
-                    continue
-                }
-
-                // Handle closing quote - include it ONLY if we're inside quotes
-                if nextIsQuote && insideQuotes {
-                    currentSentence.append(chars[j])
-                }
-
-                // Check for abbreviation (only for period)
-                // First skip whitespace to find the next word
-                if char == "." {
-                    var k = i + 1
-                    while k < chars.count && chars[k].isWhitespace { k += 1 }
-                    if k < chars.count {
-                        let remaining = String(chars[k...]).prefix(3).lowercased()
-                        let wordEnd = remaining.prefix(while: { $0.isLetter }).lowercased()
-                        // Only consider abbreviation if we actually found letters (not empty)
-                        if !wordEnd.isEmpty && (abbreviations.contains(wordEnd) || wordEnd.hasSuffix(".")) {
-                            i += 1
-                            continue
-                        }
-                    }
-                }
-
-                // Skip if followed by lowercase (not end of sentence)
-                if i + 1 < chars.count {
-                    let remaining = String(chars[(i+1)...])
-                    let afterPunctuation = remaining.prefix(while: { $0.isWhitespace }).dropFirst()
-                    if let first = afterPunctuation.first, first.isLowercase {
-                        i += 1
-                        continue
-                    }
-                }
-
-                // End of sentence - save and move on
-                i += 1
-                // Skip closing quote if it was a closing quote (and we included it)
-                if nextIsQuote && insideQuotes {
-                    i += 1
-                }
-                // Skip whitespace
-                while i < chars.count && chars[i].isWhitespace {
-                    i += 1
-                }
-                if !currentSentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    sentences.append(currentSentence.trimmingCharacters(in: .whitespacesAndNewlines))
-                }
-                currentSentence = ""
-                insideQuotes = false  // Reset quote state for next sentence
-                continue
-
-            default:
-                currentSentence.append(char)
-            }
-
-            i += 1
-        }
-
-        // Don't forget the last sentence
-        if !currentSentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            sentences.append(currentSentence.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-
-        // Handle edge case: no sentences found, return original text
+        // Fallback: if tokenizer found nothing, return the whole text
         if sentences.isEmpty && !text.isEmpty {
             return [text]
         }
 
-        // Filter out single quote characters and other non-sentences
+        // Filter out fragments that are just punctuation
         sentences = sentences.filter { sentence in
             let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.count >= 2 else { return false }
@@ -360,48 +200,6 @@ final class TextChunker {
         }
 
         return sentences
-    }
-
-    // MARK: - Long Sentence Splitting
-
-    /// Split a sentence that's too long by clauses (commas, semicolons, etc.)
-    private static func splitLongSentence(_ text: String) -> [String] {
-        let delimiters = [", ", "; ", " - ", " — ", ": "]
-        var chunks: [String] = []
-        var current = ""
-
-        let words = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-
-        for word in words {
-            let test = current.isEmpty ? word : current + " " + word
-
-            if test.count > targetChunkSize && !current.isEmpty {
-                chunks.append(current.trimmingCharacters(in: .whitespaces))
-                current = word
-            } else {
-                current = test
-            }
-
-            // Check for natural break points
-            for delimiter in delimiters {
-                if current.hasSuffix(delimiter.trimmingCharacters(in: .whitespaces)) && current.count > minChunkSize {
-                    chunks.append(current.trimmingCharacters(in: .whitespaces))
-                    current = ""
-                    break
-                }
-            }
-        }
-
-        if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // If we have a previous chunk and this one is small, merge
-            if let last = chunks.last, current.count < minChunkSize {
-                chunks[chunks.count - 1] = last + " " + current
-            } else {
-                chunks.append(current.trimmingCharacters(in: .whitespaces))
-            }
-        }
-
-        return chunks
     }
 
     // MARK: - Duration Estimation

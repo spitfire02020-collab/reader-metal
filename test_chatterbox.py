@@ -18,7 +18,7 @@ import onnxruntime as ort
 from scipy.io import wavfile
 
 # ── Configuration ────────────────────────────────────────────────────────────
-MODELS_DIR = "/tmp/fresh_models"
+MODELS_DIR = "/Users/rockymoon/Library/Developer/Xcode/DerivedData/Reader-aavzvnwqolrftncfvkvfpsgusbvb/Build/Products/Debug-iphonesimulator/Reader.app"
 # TURBO tokenizer (GPT-2, 50257 vocab) — the CORRECT one for turbo models
 TOKENIZER_PATH = MODELS_DIR + "/tokenizer.json"
 
@@ -34,7 +34,7 @@ TEST_TEXT         = "He was here for a reason. Maintaining his place in the sect
 OUTPUT_WAV        = "/Users/rockymoon/Downloads/Reader/test_output.wav"
 
 # Use iOS default voice for comparison
-REF_WAV = "/tmp/fresh_models/default_voice.wav"
+REF_WAV = MODELS_DIR + "/default_voice.wav"
 
 
 def mb():
@@ -240,6 +240,7 @@ def main():
         speaker_features=speaker_features,
     ))[0]
     print(f"  Done in {time.time()-t0:.2f}s  shape={wav.shape} dtype={wav.dtype}")
+    print(f"  Raw wav first 10: {wav.flatten()[:10].tolist()}")
 
     # ── 7. Save WAV ─────────────────────────────────────────────────────────
     audio = wav.squeeze(axis=0).flatten().astype(np.float32)

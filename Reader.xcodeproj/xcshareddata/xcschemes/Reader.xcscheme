@@ -39,6 +39,18 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "YES"
+            testExecutionOrdering = "random">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "39EE394081F27533C5E85A19"
+               BuildableName = "ReaderTests.xctest"
+               BlueprintName = "ReaderTests"
+               ReferencedContainer = "container:Reader.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>
