@@ -1118,6 +1118,7 @@ final class PlayerViewModel: ObservableObject {
             // Use callback-based synthesis instead of broken AsyncThrowingStream
             // The stream has Swift concurrency issues with @MainActor
             // Wrap in Task.detached to run ONNX inference off main thread to prevent UI freeze
+            audioPlayer.setCurrentItemID(item.id)
             audioPlayer.isExpectingMoreChunks = true
             NSLog("[PlayerVM] starting callback-based synthesis")
 

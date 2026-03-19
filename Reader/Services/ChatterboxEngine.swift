@@ -1465,7 +1465,7 @@ final class ChatterboxEngine: ObservableObject {
     }
 
     /// Write Float audio samples to a standard 16-bit WAV file using CoreAudio
-    private func writeWAV(samples: [Float], to url: URL, sampleRate: Int, shouldTrimSilence: Bool = true) throws {
+    private func writeWAV(samples: [Float], to url: URL, sampleRate: Int, shouldTrimSilence: Bool = false) throws {
         // Handle empty samples
         guard !samples.isEmpty else {
             // Write a short silent WAV file

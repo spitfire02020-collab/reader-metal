@@ -957,6 +957,21 @@ extension AudioPlayerService: AVAudioPlayerDelegate {
                     NSLog("[AudioPlayer] delegate: playback complete, stopping")
                     self.isPlaying = false
                 }
+            } else {
+                // Neither more chunks available nor expecting more from synthesis
+                // Final check: query DB in case isExpectingMoreChunks was cleared prematurely
+                let remaining = self.getRemainingChunkCount()
+                if remaining > 0 {
+                    NSLog("[AudioPlayer] delegate: flags say done but DB shows \(remaining) remaining, polling")
+                    self.pollTask?.cancel()
+                    self.pollTask = Task.detached { [weak self] in
+                        guard let self = self else { return }
+                        await self.pollForNewChunks()
+                    }
+                } else {
+                    NSLog("[AudioPlayer] delegate: playback complete, stopping")
+                    self.isPlaying = false
+                }
             }
         }
     }
