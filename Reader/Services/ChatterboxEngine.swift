@@ -42,7 +42,9 @@ struct ChatterboxConfig {
     let headDim: Int = 64
     let maxNewTokens: Int = 1024  // Match Python reference (was 1500)
     let repetitionPenalty: Float = 1.2  // Match Python reference exactly
-    let temperature: Float = 0.95  // Near-greedy sampling; just enough randomness to break loops
+    let temperature: Float = 0.8  // Match official ChatterboxTTS library default
+    let topK: Int = 1000           // Match official library: filter to top 1000 tokens
+    let topP: Float = 0.95         // Match official library: nucleus sampling threshold
     let tokensPerWord: Int = 45   // Estimated speech tokens per word for dynamic limit
 
     // Generation parameters (matching server API)
@@ -51,7 +53,8 @@ struct ChatterboxConfig {
     var cfgWeight: Float = 0.5                  // 0.2-1.0, classifier-free guidance weight
     var speedFactor: Float = 1.0                // 0.25-4.0, playback speed
 
-    // Decoding: temperature sampling + repetition penalty + frequency penalty + N-gram blocking.
+    // Decoding: temperature + top-k + top-p + repetition penalty.
+    // Matches the official ChatterboxTTS library's model.generate() defaults.
     let modelVariant: ModelVariant
 
     static let `default` = ChatterboxConfig(modelVariant: .q4f16)
@@ -1347,19 +1350,19 @@ final class ChatterboxEngine: ObservableObject {
     ///   next_token_logits = rep_penalty(generate_tokens, logits)
     ///   input_ids = argmax(next_token_logits)
     ///
-    /// Token sampling with temperature, repetition penalty, and frequency penalty.
+    /// Token sampling with temperature, top-k, top-p, and repetition penalty.
     ///
-    /// Base logic (repetition penalty) matches the Python reference exactly.
-    /// Temperature sampling is an improvement over the reference's pure greedy (argmax)
-    /// to prevent deterministic attention loops that cause word repetition.
+    /// Matches the official ChatterboxTTS library's `model.generate()` defaults:
+    ///   temperature=0.8, top_k=1000, top_p=0.95, repetition_penalty=1.2
+    ///
+    /// Our test_chatterbox.py used simplified greedy decoding (no sampling),
+    /// which is NOT how the production model is designed to be used.
     ///
     /// `previous` = all tokens generated so far (including initial START_SPEECH=6561).
     private func sampleNextToken(_ logits: [Float], previous: [Int], temperature: Float) -> Int {
         guard !logits.isEmpty else { return config.stopSpeechToken }
 
         // Step 1: Apply repetition penalty (matches Python reference exactly).
-        // For positive scores: divide by penalty (makes them less likely).
-        // For negative scores: multiply by penalty (makes them more negative).
         var adj = logits
         let seen = Set(previous)
         for token in seen {
@@ -1372,39 +1375,85 @@ final class ChatterboxEngine: ObservableObject {
         }
 
         // Step 2: Temperature scaling.
-        // temperature < 1.0 sharpens the distribution (more deterministic),
-        // temperature > 1.0 flattens it (more random).
-        // At 0.95, this is nearly identical to greedy but breaks exact deterministic loops.
         if temperature > 0 && temperature != 1.0 {
             for i in 0..<adj.count {
                 adj[i] /= temperature
             }
         }
 
-        // Step 4: Softmax to get probabilities
-        let maxLogit = adj.max() ?? 0
-        var expValues = adj.map { exp($0 - maxLogit) }
-        let sumExp = expValues.reduce(0, +)
-        guard sumExp > 0 else {
-            // Fallback to argmax if softmax fails
-            return adj.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
-        }
-        for i in 0..<expValues.count {
-            expValues[i] /= sumExp
+        // Step 3: Top-k filtering — keep only the top K highest-scoring tokens.
+        // Set all others to -infinity so they get zero probability after softmax.
+        let k = min(config.topK, adj.count)
+        if k > 0 && k < adj.count {
+            // Find the k-th largest value as threshold
+            var sorted = adj
+            sorted.sort(by: >)
+            let kthValue = sorted[k - 1]
+            for i in 0..<adj.count {
+                if adj[i] < kthValue {
+                    adj[i] = -Float.infinity
+                }
+            }
         }
 
-        // Step 5: Weighted random sampling from the probability distribution
+        // Step 4: Softmax to get probabilities.
+        let maxLogit = adj.max() ?? 0
+        var probs = adj.map { exp($0 - maxLogit) }
+        let sumProbs = probs.reduce(0, +)
+        guard sumProbs > 0 else {
+            // Fallback: argmax on original logits
+            return logits.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
+        }
+        for i in 0..<probs.count {
+            probs[i] /= sumProbs
+        }
+
+        // Step 5: Top-p (nucleus) filtering — keep tokens whose cumulative
+        // probability reaches the threshold, zero out the rest.
+        if config.topP < 1.0 {
+            // Create (index, probability) pairs sorted by probability descending
+            var indexedProbs = probs.enumerated().map { ($0.offset, $0.element) }
+            indexedProbs.sort { $0.1 > $1.1 }
+
+            var cumulative: Float = 0
+            var cutoffIndex = indexedProbs.count
+            for (i, pair) in indexedProbs.enumerated() {
+                cumulative += pair.1
+                if cumulative >= config.topP {
+                    cutoffIndex = i + 1  // Keep at least this many
+                    break
+                }
+            }
+
+            // Zero out tokens beyond the nucleus
+            let keepSet = Set(indexedProbs.prefix(cutoffIndex).map { $0.0 })
+            for i in 0..<probs.count {
+                if !keepSet.contains(i) {
+                    probs[i] = 0
+                }
+            }
+
+            // Re-normalize
+            let newSum = probs.reduce(0, +)
+            if newSum > 0 {
+                for i in 0..<probs.count {
+                    probs[i] /= newSum
+                }
+            }
+        }
+
+        // Step 6: Weighted random sampling from the probability distribution.
         let r = Float.random(in: 0..<1)
         var cumulative: Float = 0
-        for (i, prob) in expValues.enumerated() {
+        for (i, prob) in probs.enumerated() {
             cumulative += prob
             if r < cumulative {
                 return i
             }
         }
 
-        // Fallback: return last token (should rarely happen)
-        return expValues.count - 1
+        // Fallback: return last non-zero token
+        return probs.lastIndex(where: { $0 > 0 }) ?? 0
     }
 
     // MARK: - Audio I/O Utilities
