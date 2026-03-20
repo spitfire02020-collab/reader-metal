@@ -41,7 +41,7 @@ struct ChatterboxConfig {
     let numKVHeads: Int = 16
     let headDim: Int = 64
     let maxNewTokens: Int = 1500  // Sufficient for longer sentence chunks
-    let repetitionPenalty: Float = 1.2  // Match Python reference exactly
+    let repetitionPenalty: Float = 1.3  // Bumped from 1.2 to reduce phrase repetition
 
     // Generation parameters (matching server API)
     var seed: Int = 0                          // 0 = random, non-zero = reproducible
@@ -921,7 +921,10 @@ final class ChatterboxEngine: ObservableObject {
                         let last6 = Array(speechTokens.suffix(6))
                         let prev6 = Array(speechTokens.dropLast(6).suffix(6))
                         if last6 == prev6 {
-                            chatterboxLogger.warning("REPETITION PATTERN: 6-token sequence repeats at step \(step): \(last6)")
+                            chatterboxLogger.warning("REPETITION PATTERN: 6-token sequence repeats at step \(step): \(last6) — BREAKING decode loop")
+                            // Strip the repeated tail (last 6 tokens) to clean up audio
+                            speechTokens.removeLast(6)
+                            shouldStopDecoding = true
                         }
                     }
                 }
@@ -1354,6 +1357,28 @@ final class ChatterboxEngine: ObservableObject {
                 adj[token] /= config.repetitionPenalty
             } else {
                 adj[token] *= config.repetitionPenalty
+            }
+        }
+
+        // N-gram blocking (no_repeat_ngram_size = 3):
+        // If selecting a token would complete a 3-gram that already appeared
+        // in the generated sequence, set its logit to -infinity.
+        let ngramSize = 3
+        if previous.count >= ngramSize - 1 {
+            // Build the (n-1)-gram prefix from the tail of `previous`
+            let prefix = Array(previous.suffix(ngramSize - 1))
+            // Scan all previous n-grams for matching prefixes
+            for i in 0...(previous.count - ngramSize + 1) {
+                let end = i + ngramSize - 1
+                guard end < previous.count else { break }
+                let window = Array(previous[i..<end])
+                if window == prefix {
+                    // The token that followed this prefix before
+                    let blockedToken = previous[end]
+                    if blockedToken < adj.count {
+                        adj[blockedToken] = -Float.infinity
+                    }
+                }
             }
         }
 
