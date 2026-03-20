@@ -141,23 +141,11 @@ final class ChatterboxEngine: ObservableObject {
         try sessionOptions.registerCustomOps(functionPointer: fnPtr)
         try sessionOptions.setGraphOptimizationLevel(.all)
 
-        // Phase 1 Optimization: Enable CoreML for supported models (skipping q4f16 LLM)
-        let coreMLOptions = try ORTSessionOptions()
-        try coreMLOptions.registerCustomOps(functionPointer: fnPtr) // Custom ops needed for CoreML too
-        try coreMLOptions.setGraphOptimizationLevel(.all)
-        if ORTIsCoreMLExecutionProviderAvailable() {
-            let coreMLEP = ORTCoreMLExecutionProviderOptions()
-            // Use MLProgram format for better operator support
-            coreMLEP.createMLProgram = true
-            // Allow flexible shapes for variable-length audio input
-            coreMLEP.onlyAllowStaticInputShapes = false
-            // Enable on subgraphs for better performance
-            coreMLEP.enableOnSubgraphs = true
-            try coreMLOptions.appendCoreMLExecutionProvider(with: coreMLEP)
-            chatterboxLogger.info("CoreML Execution Provider explicitly enabled for supported models.")
-        } else {
-            chatterboxLogger.info("CoreML Execution Provider is not available. Falling back entirely to CPU.")
-        }
+        // Phase 1 Optimization (CoreML Reverted): 
+        // Apple's E5RT (MIL compiler) strictly forbids dynamic, unbounded shapes for
+        // operations like _Slice_output_0 and _Pad_output_0. As our generative audio models 
+        // rely heavily on flexible sequence lengths, they crash ANE. We must explicitly 
+        // rely on CPU logic and our Phase 1b array memory pre-allocation for speed instead.
 
         // Use dynamic ONNX models
         let modelPathFn: (ModelComponent) -> URL = { [self] in
@@ -168,13 +156,13 @@ final class ChatterboxEngine: ObservableObject {
         speechEncoderSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.speechEncoder).path,
-            sessionOptions: coreMLOptions
+            sessionOptions: sessionOptions
         )
         chatterboxLogger.info("loadModels: loading embedTokens from: \(modelPathFn(.embedTokens).lastPathComponent)")
         embedTokensSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.embedTokens).path,
-            sessionOptions: coreMLOptions
+            sessionOptions: sessionOptions
         )
         chatterboxLogger.info("loadModels: loading languageModel from: \(modelPathFn(.languageModel).lastPathComponent)")
         languageModelSession = try ORTSession(
@@ -186,7 +174,7 @@ final class ChatterboxEngine: ObservableObject {
         conditionalDecoderSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.conditionalDecoder).path,
-            sessionOptions: coreMLOptions
+            sessionOptions: sessionOptions
         )
         chatterboxLogger.info("loadModels: all models loaded")
 
