@@ -143,6 +143,16 @@ final class TextChunker {
             options: .regularExpression
         )
 
+        // Normalize typographic quotes and apostrophes to standard ASCII
+        // Smart quotes/apostrophes often break LLM tokenization due to multi-byte UTF-8,
+        // causing out-of-vocabulary tokens that trigger deterministic attention loops.
+        cleaned = cleaned.replacingOccurrences(of: "“", with: "\"")
+        cleaned = cleaned.replacingOccurrences(of: "”", with: "\"")
+        cleaned = cleaned.replacingOccurrences(of: "‘", with: "'")
+        cleaned = cleaned.replacingOccurrences(of: "’", with: "'")
+        cleaned = cleaned.replacingOccurrences(of: "—", with: "-") // em-dash
+        cleaned = cleaned.replacingOccurrences(of: "–", with: "-") // en-dash
+
         // Normalize newlines
         cleaned = cleaned.replacingOccurrences(
             of: "\\n{3,}",
