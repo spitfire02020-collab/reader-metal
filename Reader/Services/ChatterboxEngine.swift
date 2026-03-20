@@ -42,7 +42,7 @@ struct ChatterboxConfig {
     let headDim: Int = 64
     let maxNewTokens: Int = 1024  // Match Python reference (was 1500)
     let repetitionPenalty: Float = 1.2  // Match Python reference exactly
-    let temperature: Float = 0.8  // Sampling temperature to break deterministic loops
+    let temperature: Float = 0.95  // Near-greedy sampling; just enough randomness to break loops
     let tokensPerWord: Int = 45   // Estimated speech tokens per word for dynamic limit
 
     // Generation parameters (matching server API)
@@ -1371,23 +1371,10 @@ final class ChatterboxEngine: ObservableObject {
             }
         }
 
-        // Step 2: Apply frequency penalty — scale by occurrence count.
-        // Tokens that appeared 5x get 5x the additional penalty.
-        // This goes beyond the reference to aggressively suppress over-repeated tokens.
-        var tokenCounts: [Int: Int] = [:]
-        for token in previous {
-            tokenCounts[token, default: 0] += 1
-        }
-        let frequencyPenalty: Float = 0.3
-        for (token, count) in tokenCounts where count > 1 {
-            guard token < adj.count else { continue }
-            adj[token] -= frequencyPenalty * Float(count)
-        }
-
-        // Step 3: Temperature sampling.
+        // Step 2: Temperature scaling.
         // temperature < 1.0 sharpens the distribution (more deterministic),
         // temperature > 1.0 flattens it (more random).
-        // At 0.8, this preserves quality while breaking deterministic loops.
+        // At 0.95, this is nearly identical to greedy but breaks exact deterministic loops.
         if temperature > 0 && temperature != 1.0 {
             for i in 0..<adj.count {
                 adj[i] /= temperature
