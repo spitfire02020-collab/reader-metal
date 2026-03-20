@@ -136,8 +136,28 @@ final class ChatterboxEngine: ObservableObject {
         let env = try ORTEnv(loggingLevel: .warning)
         self.ortEnv = env
 
-        let sessionOptions = try createSessionOptions(useCoreML: useCoreML)
-        chatterboxLogger.info("loadModels: using dynamic models, CoreML: \(useCoreML)")
+        let sessionOptions = try ORTSessionOptions()
+        let fnPtr = OrtExt.getRegisterCustomOpsFunctionPointer()
+        try sessionOptions.registerCustomOps(functionPointer: fnPtr)
+        try sessionOptions.setGraphOptimizationLevel(.all)
+
+        // Phase 1 Optimization: Enable CoreML for supported models (skipping q4f16 LLM)
+        let coreMLOptions = try ORTSessionOptions()
+        try coreMLOptions.registerCustomOps(functionPointer: fnPtr) // Custom ops needed for CoreML too
+        try coreMLOptions.setGraphOptimizationLevel(.all)
+        if ORTIsCoreMLExecutionProviderAvailable() {
+            let coreMLEP = ORTCoreMLExecutionProviderOptions()
+            // Use MLProgram format for better operator support
+            coreMLEP.createMLProgram = true
+            // Allow flexible shapes for variable-length audio input
+            coreMLEP.onlyAllowStaticInputShapes = false
+            // Enable on subgraphs for better performance
+            coreMLEP.enableOnSubgraphs = true
+            try coreMLOptions.appendCoreMLExecutionProvider(with: coreMLEP)
+            chatterboxLogger.info("CoreML Execution Provider explicitly enabled for supported models.")
+        } else {
+            chatterboxLogger.info("CoreML Execution Provider is not available. Falling back entirely to CPU.")
+        }
 
         // Use dynamic ONNX models
         let modelPathFn: (ModelComponent) -> URL = { [self] in
@@ -148,13 +168,13 @@ final class ChatterboxEngine: ObservableObject {
         speechEncoderSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.speechEncoder).path,
-            sessionOptions: sessionOptions
+            sessionOptions: coreMLOptions
         )
         chatterboxLogger.info("loadModels: loading embedTokens from: \(modelPathFn(.embedTokens).lastPathComponent)")
         embedTokensSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.embedTokens).path,
-            sessionOptions: sessionOptions
+            sessionOptions: coreMLOptions
         )
         chatterboxLogger.info("loadModels: loading languageModel from: \(modelPathFn(.languageModel).lastPathComponent)")
         languageModelSession = try ORTSession(
@@ -166,7 +186,7 @@ final class ChatterboxEngine: ObservableObject {
         conditionalDecoderSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.conditionalDecoder).path,
-            sessionOptions: sessionOptions
+            sessionOptions: coreMLOptions
         )
         chatterboxLogger.info("loadModels: all models loaded")
 
@@ -859,7 +879,13 @@ final class ChatterboxEngine: ObservableObject {
 
         var shouldStopDecoding = false
 
-        for step in 0..<self.config.maxNewTokens {
+        // Phase 1 Optimization: Pre-allocate mask buffer outside the tight autoregressive loop
+        // to prevent allocating a massive new array 500+ times per sentence.
+        let dynamicMaxTokens = self.config.maxNewTokens // Use a local var for clarity
+        let maxPossibleMaskLen = totalSeqLen + dynamicMaxTokens + 1
+        let preallocatedMask = Array(repeating: Int64(1), count: maxPossibleMaskLen)
+
+        for step in 0..<dynamicMaxTokens {
             try Task.checkCancellation()  // Stop if cancelled
             chatterboxLogger.debug("decode step \(step): maxToken=\(self.config.maxNewTokens)")
 
