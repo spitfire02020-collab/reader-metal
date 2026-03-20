@@ -40,12 +40,8 @@ struct ChatterboxConfig {
     let silenceToken: Int = 4299
     let numKVHeads: Int = 16
     let headDim: Int = 64
-    let maxNewTokens: Int = 1024  // Match Python reference (was 1500)
+    let maxNewTokens: Int = 1500  // Sufficient for longer sentence chunks
     let repetitionPenalty: Float = 1.2  // Match Python reference exactly
-    let temperature: Float = 0.8  // Match official ChatterboxTTS library default
-    let topK: Int = 1000           // Match official library: filter to top 1000 tokens
-    let topP: Float = 0.95         // Match official library: nucleus sampling threshold
-    let tokensPerWord: Int = 45   // Estimated speech tokens per word for dynamic limit
 
     // Generation parameters (matching server API)
     var seed: Int = 0                          // 0 = random, non-zero = reproducible
@@ -53,8 +49,8 @@ struct ChatterboxConfig {
     var cfgWeight: Float = 0.5                  // 0.2-1.0, classifier-free guidance weight
     var speedFactor: Float = 1.0                // 0.25-4.0, playback speed
 
-    // Decoding: temperature + top-k + top-p + repetition penalty.
-    // Matches the official ChatterboxTTS library's model.generate() defaults.
+    // Decoding: greedy (argmax) + repetition penalty — matches reference exactly.
+    // No temperature scaling or top-k sampling.
     let modelVariant: ModelVariant
 
     static let `default` = ChatterboxConfig(modelVariant: .q4f16)
@@ -859,18 +855,13 @@ final class ChatterboxEngine: ObservableObject {
         // Each iteration is wrapped in autoreleasepool so ORT's ObjC-autoreleased
         // tensors (logits, intermediate activations) are freed immediately after
         // each step rather than accumulating for all 400 steps (~23 GB without this).
-        chatterboxLogger.debug("decode loop start, totalSeqLen=\(totalSeqLen)")
-
-        // Dynamic max tokens: cap based on input word count to prevent runaway generation
-        let wordCount = text.split(separator: " ").count
-        let dynamicMaxTokens = min(self.config.maxNewTokens, max(200, wordCount * self.config.tokensPerWord))
-        chatterboxLogger.debug("Dynamic maxTokens=\(dynamicMaxTokens) (words=\(wordCount), hard cap=\(self.config.maxNewTokens))")
+        chatterboxLogger.debug("decode loop start, totalSeqLen=\(totalSeqLen), maxTokens=\(self.config.maxNewTokens)")
 
         var shouldStopDecoding = false
 
-        for step in 0..<dynamicMaxTokens {
+        for step in 0..<self.config.maxNewTokens {
             try Task.checkCancellation()  // Stop if cancelled
-            chatterboxLogger.debug("decode step \(step): maxToken=\(dynamicMaxTokens)")
+            chatterboxLogger.debug("decode step \(step): maxToken=\(self.config.maxNewTokens)")
 
             var nextStepInputs: [String: ORTValue] = [:]
             var generatedToken = config.stopSpeechToken
@@ -902,8 +893,9 @@ final class ChatterboxEngine: ObservableObject {
                 }
                 let lastPosLogits = Array(allLogits[lastStart..<lastEnd])
 
-                // Temperature sampling + repetition penalty (improvement over reference's pure greedy).
-                generatedToken = sampleNextToken(lastPosLogits, previous: generateTokens, temperature: generationConfig.temperature)
+                // Greedy decode: argmax + repetition penalty (matches reference exactly).
+                // No temperature scaling, no top-k sampling, no logit masking.
+                generatedToken = greedyNextToken(lastPosLogits, previous: generateTokens)
                 generateTokens.append(generatedToken)
 
                 // Log tokens for debugging repetition patterns
@@ -929,10 +921,7 @@ final class ChatterboxEngine: ObservableObject {
                         let last6 = Array(speechTokens.suffix(6))
                         let prev6 = Array(speechTokens.dropLast(6).suffix(6))
                         if last6 == prev6 {
-                            chatterboxLogger.warning("REPETITION PATTERN: 6-token sequence repeats at step \(step): \(last6) — BREAKING decode loop")
-                            // Strip the repeated tail (last 6 tokens) to clean up audio
-                            speechTokens.removeLast(6)
-                            shouldStopDecoding = true
+                            chatterboxLogger.warning("REPETITION PATTERN: 6-token sequence repeats at step \(step): \(last6)")
                         }
                     }
                 }
@@ -1350,22 +1339,16 @@ final class ChatterboxEngine: ObservableObject {
     ///   next_token_logits = rep_penalty(generate_tokens, logits)
     ///   input_ids = argmax(next_token_logits)
     ///
-    /// Token sampling with temperature, top-k, top-p, and repetition penalty.
-    ///
-    /// Matches the official ChatterboxTTS library's `model.generate()` defaults:
-    ///   temperature=0.8, top_k=1000, top_p=0.95, repetition_penalty=1.2
-    ///
-    /// Our test_chatterbox.py used simplified greedy decoding (no sampling),
-    /// which is NOT how the production model is designed to be used.
-    ///
+    /// No temperature scaling, no top-k, no logit masking.
     /// `previous` = all tokens generated so far (including initial START_SPEECH=6561).
-    private func sampleNextToken(_ logits: [Float], previous: [Int], temperature: Float) -> Int {
+    private func greedyNextToken(_ logits: [Float], previous: [Int]) -> Int {
         guard !logits.isEmpty else { return config.stopSpeechToken }
 
-        // Step 1: Apply repetition penalty (matches Python reference exactly).
+        // Apply repetition penalty: reduces score of previously generated tokens.
+        // For positive scores: divide by penalty (makes them less likely).
+        // For negative scores: multiply by penalty (makes them more negative).
         var adj = logits
-        let seen = Set(previous)
-        for token in seen {
+        for token in previous {
             guard token < adj.count else { continue }
             if adj[token] > 0 {
                 adj[token] /= config.repetitionPenalty
@@ -1374,86 +1357,16 @@ final class ChatterboxEngine: ObservableObject {
             }
         }
 
-        // Step 2: Temperature scaling.
-        if temperature > 0 && temperature != 1.0 {
-            for i in 0..<adj.count {
-                adj[i] /= temperature
+        // Greedy: argmax
+        var bestIdx = 0
+        var bestVal = adj[0]
+        for i in 1..<adj.count {
+            if adj[i] > bestVal {
+                bestVal = adj[i]
+                bestIdx = i
             }
         }
-
-        // Step 3: Top-k filtering — keep only the top K highest-scoring tokens.
-        // Set all others to -infinity so they get zero probability after softmax.
-        let k = min(config.topK, adj.count)
-        if k > 0 && k < adj.count {
-            // Find the k-th largest value as threshold
-            var sorted = adj
-            sorted.sort(by: >)
-            let kthValue = sorted[k - 1]
-            for i in 0..<adj.count {
-                if adj[i] < kthValue {
-                    adj[i] = -Float.infinity
-                }
-            }
-        }
-
-        // Step 4: Softmax to get probabilities.
-        let maxLogit = adj.max() ?? 0
-        var probs = adj.map { exp($0 - maxLogit) }
-        let sumProbs = probs.reduce(0, +)
-        guard sumProbs > 0 else {
-            // Fallback: argmax on original logits
-            return logits.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
-        }
-        for i in 0..<probs.count {
-            probs[i] /= sumProbs
-        }
-
-        // Step 5: Top-p (nucleus) filtering — keep tokens whose cumulative
-        // probability reaches the threshold, zero out the rest.
-        if config.topP < 1.0 {
-            // Create (index, probability) pairs sorted by probability descending
-            var indexedProbs = probs.enumerated().map { ($0.offset, $0.element) }
-            indexedProbs.sort { $0.1 > $1.1 }
-
-            var cumulative: Float = 0
-            var cutoffIndex = indexedProbs.count
-            for (i, pair) in indexedProbs.enumerated() {
-                cumulative += pair.1
-                if cumulative >= config.topP {
-                    cutoffIndex = i + 1  // Keep at least this many
-                    break
-                }
-            }
-
-            // Zero out tokens beyond the nucleus
-            let keepSet = Set(indexedProbs.prefix(cutoffIndex).map { $0.0 })
-            for i in 0..<probs.count {
-                if !keepSet.contains(i) {
-                    probs[i] = 0
-                }
-            }
-
-            // Re-normalize
-            let newSum = probs.reduce(0, +)
-            if newSum > 0 {
-                for i in 0..<probs.count {
-                    probs[i] /= newSum
-                }
-            }
-        }
-
-        // Step 6: Weighted random sampling from the probability distribution.
-        let r = Float.random(in: 0..<1)
-        var cumulative: Float = 0
-        for (i, prob) in probs.enumerated() {
-            cumulative += prob
-            if r < cumulative {
-                return i
-            }
-        }
-
-        // Fallback: return last non-zero token
-        return probs.lastIndex(where: { $0 > 0 }) ?? 0
+        return bestIdx
     }
 
     // MARK: - Audio I/O Utilities
