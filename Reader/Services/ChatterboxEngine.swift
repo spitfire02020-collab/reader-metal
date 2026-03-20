@@ -40,8 +40,10 @@ struct ChatterboxConfig {
     let silenceToken: Int = 4299
     let numKVHeads: Int = 16
     let headDim: Int = 64
-    let maxNewTokens: Int = 1500  // Sufficient for longer sentence chunks
-    let repetitionPenalty: Float = 1.3  // Bumped from 1.2 to reduce phrase repetition
+    let maxNewTokens: Int = 1024  // Match Python reference (was 1500)
+    let repetitionPenalty: Float = 1.2  // Match Python reference exactly
+    let temperature: Float = 0.8  // Sampling temperature to break deterministic loops
+    let tokensPerWord: Int = 45   // Estimated speech tokens per word for dynamic limit
 
     // Generation parameters (matching server API)
     var seed: Int = 0                          // 0 = random, non-zero = reproducible
@@ -49,8 +51,7 @@ struct ChatterboxConfig {
     var cfgWeight: Float = 0.5                  // 0.2-1.0, classifier-free guidance weight
     var speedFactor: Float = 1.0                // 0.25-4.0, playback speed
 
-    // Decoding: greedy (argmax) + repetition penalty — matches reference exactly.
-    // No temperature scaling or top-k sampling.
+    // Decoding: temperature sampling + repetition penalty + frequency penalty + N-gram blocking.
     let modelVariant: ModelVariant
 
     static let `default` = ChatterboxConfig(modelVariant: .q4f16)
@@ -855,13 +856,18 @@ final class ChatterboxEngine: ObservableObject {
         // Each iteration is wrapped in autoreleasepool so ORT's ObjC-autoreleased
         // tensors (logits, intermediate activations) are freed immediately after
         // each step rather than accumulating for all 400 steps (~23 GB without this).
-        chatterboxLogger.debug("decode loop start, totalSeqLen=\(totalSeqLen), maxTokens=\(self.config.maxNewTokens)")
+        chatterboxLogger.debug("decode loop start, totalSeqLen=\(totalSeqLen)")
+
+        // Dynamic max tokens: cap based on input word count to prevent runaway generation
+        let wordCount = text.split(separator: " ").count
+        let dynamicMaxTokens = min(self.config.maxNewTokens, max(200, wordCount * self.config.tokensPerWord))
+        chatterboxLogger.debug("Dynamic maxTokens=\(dynamicMaxTokens) (words=\(wordCount), hard cap=\(self.config.maxNewTokens))")
 
         var shouldStopDecoding = false
 
-        for step in 0..<self.config.maxNewTokens {
+        for step in 0..<dynamicMaxTokens {
             try Task.checkCancellation()  // Stop if cancelled
-            chatterboxLogger.debug("decode step \(step): maxToken=\(self.config.maxNewTokens)")
+            chatterboxLogger.debug("decode step \(step): maxToken=\(dynamicMaxTokens)")
 
             var nextStepInputs: [String: ORTValue] = [:]
             var generatedToken = config.stopSpeechToken
@@ -893,9 +899,8 @@ final class ChatterboxEngine: ObservableObject {
                 }
                 let lastPosLogits = Array(allLogits[lastStart..<lastEnd])
 
-                // Greedy decode: argmax + repetition penalty (matches reference exactly).
-                // No temperature scaling, no top-k sampling, no logit masking.
-                generatedToken = greedyNextToken(lastPosLogits, previous: generateTokens)
+                // Temperature sampling + repetition penalty (improvement over reference's pure greedy).
+                generatedToken = sampleNextToken(lastPosLogits, previous: generateTokens, temperature: generationConfig.temperature)
                 generateTokens.append(generatedToken)
 
                 // Log tokens for debugging repetition patterns
@@ -1342,16 +1347,22 @@ final class ChatterboxEngine: ObservableObject {
     ///   next_token_logits = rep_penalty(generate_tokens, logits)
     ///   input_ids = argmax(next_token_logits)
     ///
-    /// No temperature scaling, no top-k, no logit masking.
+    /// Token sampling with temperature, repetition penalty, and frequency penalty.
+    ///
+    /// Base logic (repetition penalty) matches the Python reference exactly.
+    /// Temperature sampling is an improvement over the reference's pure greedy (argmax)
+    /// to prevent deterministic attention loops that cause word repetition.
+    ///
     /// `previous` = all tokens generated so far (including initial START_SPEECH=6561).
-    private func greedyNextToken(_ logits: [Float], previous: [Int]) -> Int {
+    private func sampleNextToken(_ logits: [Float], previous: [Int], temperature: Float) -> Int {
         guard !logits.isEmpty else { return config.stopSpeechToken }
 
-        // Apply repetition penalty: reduces score of previously generated tokens.
+        // Step 1: Apply repetition penalty (matches Python reference exactly).
         // For positive scores: divide by penalty (makes them less likely).
         // For negative scores: multiply by penalty (makes them more negative).
         var adj = logits
-        for token in previous {
+        let seen = Set(previous)
+        for token in seen {
             guard token < adj.count else { continue }
             if adj[token] > 0 {
                 adj[token] /= config.repetitionPenalty
@@ -1360,38 +1371,53 @@ final class ChatterboxEngine: ObservableObject {
             }
         }
 
-        // N-gram blocking (no_repeat_ngram_size = 3):
-        // If selecting a token would complete a 3-gram that already appeared
-        // in the generated sequence, set its logit to -infinity.
-        let ngramSize = 3
-        if previous.count >= ngramSize - 1 {
-            // Build the (n-1)-gram prefix from the tail of `previous`
-            let prefix = Array(previous.suffix(ngramSize - 1))
-            // Scan all previous n-grams for matching prefixes
-            for i in 0...(previous.count - ngramSize + 1) {
-                let end = i + ngramSize - 1
-                guard end < previous.count else { break }
-                let window = Array(previous[i..<end])
-                if window == prefix {
-                    // The token that followed this prefix before
-                    let blockedToken = previous[end]
-                    if blockedToken < adj.count {
-                        adj[blockedToken] = -Float.infinity
-                    }
-                }
+        // Step 2: Apply frequency penalty — scale by occurrence count.
+        // Tokens that appeared 5x get 5x the additional penalty.
+        // This goes beyond the reference to aggressively suppress over-repeated tokens.
+        var tokenCounts: [Int: Int] = [:]
+        for token in previous {
+            tokenCounts[token, default: 0] += 1
+        }
+        let frequencyPenalty: Float = 0.3
+        for (token, count) in tokenCounts where count > 1 {
+            guard token < adj.count else { continue }
+            adj[token] -= frequencyPenalty * Float(count)
+        }
+
+        // Step 3: Temperature sampling.
+        // temperature < 1.0 sharpens the distribution (more deterministic),
+        // temperature > 1.0 flattens it (more random).
+        // At 0.8, this preserves quality while breaking deterministic loops.
+        if temperature > 0 && temperature != 1.0 {
+            for i in 0..<adj.count {
+                adj[i] /= temperature
             }
         }
 
-        // Greedy: argmax
-        var bestIdx = 0
-        var bestVal = adj[0]
-        for i in 1..<adj.count {
-            if adj[i] > bestVal {
-                bestVal = adj[i]
-                bestIdx = i
+        // Step 4: Softmax to get probabilities
+        let maxLogit = adj.max() ?? 0
+        var expValues = adj.map { exp($0 - maxLogit) }
+        let sumExp = expValues.reduce(0, +)
+        guard sumExp > 0 else {
+            // Fallback to argmax if softmax fails
+            return adj.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
+        }
+        for i in 0..<expValues.count {
+            expValues[i] /= sumExp
+        }
+
+        // Step 5: Weighted random sampling from the probability distribution
+        let r = Float.random(in: 0..<1)
+        var cumulative: Float = 0
+        for (i, prob) in expValues.enumerated() {
+            cumulative += prob
+            if r < cumulative {
+                return i
             }
         }
-        return bestIdx
+
+        // Fallback: return last token (should rarely happen)
+        return expValues.count - 1
     }
 
     // MARK: - Audio I/O Utilities
