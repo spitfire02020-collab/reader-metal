@@ -12,55 +12,83 @@ final class MPSGEMM {
     }
 
     /// C = A @ B^T (transpose B)
-    /// A: [B, S, M], B: [N, M] → C: [B, S, N]
+    /// A: [S, M] row-major, B: [N, M] row-major → C: [S, N] row-major
     func matmulTransposeB(
         commandBuffer: MTLCommandBuffer,
         A: MTLBuffer, B: MTLBuffer, C: MTLBuffer,
         batch: Int, S: Int, M: Int, N: Int
     ) {
-        let desc = MPSMatrixDescriptor(
+        // B is [N, M] row-major but we want to multiply by B^T ([M, N]).
+        // Use MPSTransposeMatrixDescriptor to create a transposed logical view of B's buffer.
+        let bDesc = MPSTransposeMatrixDescriptor(
             rows: M, columns: N,
-            transposed: true,
+            rowBytes: N * MemoryLayout<Float16>.stride,
             dataType: .float16
         )
-        let mpB = MPSMatrix(buffer: B, descriptor: desc)
-        let cDesc = MPSMatrixDescriptor(rows: S, columns: N, dataType: .float16)
-        let mpC = MPSMatrix(buffer: C, descriptor: cDesc)
-        let aDesc = MPSMatrixDescriptor(rows: S, columns: M, dataType: .float16)
-        let mpA = MPSMatrix(buffer: A, descriptor: aDesc)
+        let mpB = MPSMatrix(buffer: B, matrixDescription: bDesc)
 
+        // C is [S, N]
+        let cDesc = MPSTransposeMatrixDescriptor(
+            rows: S, columns: N,
+            rowBytes: N * MemoryLayout<Float16>.stride,
+            dataType: .float16
+        )
+        let mpC = MPSMatrix(buffer: C, matrixDescription: cDesc)
+
+        // A is [S, M]
+        let aDesc = MPSTransposeMatrixDescriptor(
+            rows: S, columns: M,
+            rowBytes: M * MemoryLayout<Float16>.stride,
+            dataType: .float16
+        )
+        let mpA = MPSMatrix(buffer: A, matrixDescription: aDesc)
+
+        // MPSMatrixMultiplication computes C = A @ B.
+        // Since mpB is a transposed view of B, A @ mpB = A @ B^T.
         let op = MPSMatrixMultiplication(
             device: device,
-            transposeLeft: false,
-            transposeRight: true,
-            resultMatrix: mpC,
-            leftMatrix: mpA,
-            rightMatrix: mpB
+            resultRows: S,
+            resultColumns: N,
+            interiorColumns: M,
+            alpha: 1.0,
+            beta: 0.0
         )
         op.encode(commandBuffer: commandBuffer, leftMatrix: mpA, rightMatrix: mpB, resultMatrix: mpC)
     }
 
     /// C = A @ B (no transpose)
-    /// A: [B, S, M], B: [M, N] → C: [B, S, N]
+    /// A: [S, M] row-major, B: [M, N] row-major → C: [S, N] row-major
     func matmul(
         commandBuffer: MTLCommandBuffer,
         A: MTLBuffer, B: MTLBuffer, C: MTLBuffer,
         batch: Int, S: Int, M: Int, N: Int
     ) {
-        let aDesc = MPSMatrixDescriptor(rows: S, columns: M, dataType: .float16)
-        let bDesc = MPSMatrixDescriptor(rows: M, columns: N, dataType: .float16)
-        let cDesc = MPSMatrixDescriptor(rows: S, columns: N, dataType: .float16)
-        let mpA = MPSMatrix(buffer: A, descriptor: aDesc)
-        let mpB = MPSMatrix(buffer: B, descriptor: bDesc)
-        let mpC = MPSMatrix(buffer: C, descriptor: cDesc)
+        let aDesc = MPSTransposeMatrixDescriptor(
+            rows: S, columns: M,
+            rowBytes: M * MemoryLayout<Float16>.stride,
+            dataType: .float16
+        )
+        let bDesc = MPSTransposeMatrixDescriptor(
+            rows: M, columns: N,
+            rowBytes: N * MemoryLayout<Float16>.stride,
+            dataType: .float16
+        )
+        let cDesc = MPSTransposeMatrixDescriptor(
+            rows: S, columns: N,
+            rowBytes: N * MemoryLayout<Float16>.stride,
+            dataType: .float16
+        )
+        let mpA = MPSMatrix(buffer: A, matrixDescription: aDesc)
+        let mpB = MPSMatrix(buffer: B, matrixDescription: bDesc)
+        let mpC = MPSMatrix(buffer: C, matrixDescription: cDesc)
 
         let op = MPSMatrixMultiplication(
             device: device,
-            transposeLeft: false,
-            transposeRight: false,
-            resultMatrix: mpC,
-            leftMatrix: mpA,
-            rightMatrix: mpB
+            resultRows: S,
+            resultColumns: N,
+            interiorColumns: M,
+            alpha: 1.0,
+            beta: 0.0
         )
         op.encode(commandBuffer: commandBuffer, leftMatrix: mpA, rightMatrix: mpB, resultMatrix: mpC)
     }

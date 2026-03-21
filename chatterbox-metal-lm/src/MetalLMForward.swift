@@ -17,8 +17,7 @@ final class MetalLMForward {
     /// Single-step forward pass (STUB — actual implementation uses MPSGraph GEMMs)
     func forward(
         inputs: MTLBuffer,
-        inputLength: Int,
-        kvCache: KVCacheManager
+        inputLength: Int
     ) throws -> MTLBuffer {
         // TODO: Implement actual GPT2 block forward using:
         // 1. Pre-dequantized fp16 weights from weightLoader.dequantizedWeights
