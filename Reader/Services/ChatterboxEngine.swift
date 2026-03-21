@@ -102,6 +102,10 @@ final class ChatterboxEngine: ObservableObject {
     private var conditionalDecoderSession: ORTSession?
     // private var conditionalDecoderSession: ORTSession? // Removed: created dynamically per chunk
 
+    // Metal LM (replaces ONNX language model when useMetalLM is true)
+    private(set) var useMetalLM: Bool = false
+    private var metalLM: ChatterboxMetalLM?
+
     // Holds all relevant speech encoder outputs.
     // audio_features is used as a prefix in inputs_embeds for the language model
     // to condition voice style. speaker_embeddings + speaker_features go to the
@@ -181,6 +185,18 @@ final class ChatterboxEngine: ObservableObject {
             modelPath: modelPathFn(.conditionalDecoder).path,
             sessionOptions: cpuOptions
         )
+
+        // Initialize Metal LM if enabled
+        if useMetalLM {
+            let downloadService = ModelDownloadService.shared
+            let weightDir = downloadService.modelDirectory.appendingPathComponent("metal_weights")
+            metalLM = try? ChatterboxMetalLM(weightDirectory: weightDir)
+            if metalLM != nil {
+                chatterboxLogger.info("Metal LM initialized successfully")
+            } else {
+                chatterboxLogger.warning("Metal LM initialization failed, falling back to ONNX")
+            }
+        }
 
         isLoaded = true
         chatterboxLogger.info("loadModels: all models loaded")
@@ -963,6 +979,14 @@ final class ChatterboxEngine: ObservableObject {
                     throw ChatterboxError.inferenceError("Logits slice out of bounds at step \(step)")
                 }
                 let lastPosLogits = Array(allLogits[lastStart..<lastEnd])
+
+                // Metal LM path (TODO: wire up to actual metal.generate() when stub is implemented)
+                // For now, Metal LM path falls through to ONNX greedy decode.
+                // When metalLM.generate() is implemented, replace the ONNX path below with:
+                //   if useMetalLM, let metal = metalLM {
+                //       let metalToken = try? metal.generate(inputs_embeds: ..., kvCache: ...)
+                //       generatedToken = metalToken ?? config.stopSpeechToken
+                //   }
 
                 // Greedy decode: argmax + repetition penalty (matches reference exactly).
                 // No temperature scaling, no top-k sampling, no logit masking.
