@@ -52,4 +52,5 @@ final class Q4F16Dequantizer {
 
 enum MetalLMError: Error {
     case kernelNotFound(String)
+    case commandQueueFailed
 }
