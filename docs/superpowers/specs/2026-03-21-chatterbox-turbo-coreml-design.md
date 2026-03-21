@@ -76,6 +76,11 @@ Each export script is self-contained: downloads its ONNX source if not present, 
 - Simple embedding lookup — no special state handling needed
 - `minimum_deployment_target=iOS18`, `compute_units=CPU_AND_GPU`
 
+**Note on token ID ranges:** `embed_tokens` accepts two types of token IDs:
+- **Text tokens:** GPT-2 byte-level BPE IDs (0–50256) during text embedding phase
+- **Speech tokens:** Generated speech IDs (0–6562) during the decode loop (to embed the LM's own output for next-token prediction)
+- The single embedding table internally handles both ranges. CoreML conversion preserves this routing — the same `embed_tokens.mlmodel` is called twice per synthesis: once with text IDs, once per decode step with speech IDs.
+
 ---
 
 ### 3. Language Model (Complex — Stateful)
@@ -96,10 +101,28 @@ Each export script is self-contained: downloads its ONNX source if not present, 
   - 24 × `present.N.key` + 24 × `present.N.value` — same shapes as inputs
 
 **Conversion approach:** Stateful model with `ct.StateType`
-- Each of the 24 KV layers becomes a `ct.StateType` with name `k_cache_N` and `v_cache_N`
-- State shape: `[batch_size=1, num_kv_heads=16, seq_len=RangeDim(1, 4096), head_dim=64]`
+- coremltools 7+ supports **regular inputs alongside state inputs** (confirmed via official docs — `ToyModelWithKVCache` example passes `input_ids` + `causal_mask` as regular inputs with `k_cache`/`v_cache` as states)
+- `inputs_embeds`, `attention_mask`, and `position_ids` remain as **regular inputs** passed every `predict()` call
+- Each of the 24 KV layers becomes a `ct.StateType` with name matching the PyTorch `register_buffer` name (e.g., `k_cache_0`, `v_cache_0`)
+- State shape: `[batch_size=1, num_kv_heads=16, seq_len=RangeDim(1, 8192), head_dim=64]` — **upper bound 8192** to handle long audio prefixes (audio tokens can be 750+, text tokens 500+, generated speech 1500+, totaling ~2750+)
 - `minimum_deployment_target=ct.target.iOS18` (required for stateful model support)
-- Swift side calls `predict()` repeatedly; CoreML manages cache internally
+- Swift decode loop: call `predict(inputs_dict, kv_state)` each step; CoreML internally updates KV cache
+
+**Stateful decode loop (Swift):**
+```swift
+kv_state = mlmodel.makeState()
+for step in 0..<maxTokens {
+    let outputs = try mlmodel.predict(inputs: [
+        "inputs_embeds": nextEmbed,      // regular input
+        "attention_mask": allOnesMask,    // regular input, grows each step
+        "position_ids": stepPositions     // regular input
+    ], state: kv_state)
+    let logits = outputs["logits"]
+    let nextToken = greedyDecode(logits)
+    if nextToken == STOP_SPEECH { break }
+    // prepare next embed for next step...
+}
+```
 
 **Key challenge:** coremltools must correctly map 48 ONNX KV tensors → 48 CoreML states
 
@@ -151,8 +174,8 @@ Each export script runs a **numerical verification pass** after conversion:
 
 **Specific tests:**
 - `test_speech_encoder.py` — 1s silence + real audio, compare all 4 outputs
-- `test_embed_tokens.py` — known token sequence, compare embeddings
-- `test_language_model.py` — 3-step decode with known KV state, compare logits
+- `test_embed_tokens.py` — known token sequence, compare embeddings (text IDs + speech IDs)
+- `test_language_model.py` — 3-step decode loop using stateful `predict(state)` API, compare logits at each step against ONNX reference
 - `test_decoder.py` — known speech tokens + speaker context, compare waveform
 
 **Integration test (`test_pipeline.py`):**
@@ -175,6 +198,14 @@ Each export script runs a **numerical verification pass** after conversion:
 - CoreML state is opaque — cannot be inspected from Swift
 - State is maintained internally between `predict()` calls
 - State must be re-initialized per synthesis session (new `MLModel` instance)
+- **Performance note:** Creating a new `MLModel` instance per synthesis session has non-trivial loading cost (~1-3s). For best performance, keep a single `MLModel` instance alive across multiple synthesis calls within the same app session.
+
+### Proof-of-Concept First
+Before building the full pipeline, create a minimal PoC to verify:
+1. coremltools 7+ can handle a stateful model with **48 state tensors + regular inputs** (`attention_mask`, `position_ids`) simultaneously
+2. Q4F16 quantization is preserved through conversion
+3. Numerical output matches ONNX reference within tolerance (`rtol=1e-2, atol=1e-3`)
+This is the **critical path** — if it fails, the entire stateful approach must be reconsidered (fall back to stateless LM with manual KV cache management).
 
 ### Integration with Reader App
 - Replace ONNX session creation with CoreML `MLModel` loading
@@ -185,13 +216,15 @@ Each export script runs a **numerical verification pass** after conversion:
 
 ## Files to Modify (Reader App)
 
-After CoreML models are generated, these files in Reader need updates:
+After CoreML models are generated locally, they are placed in `Reader/Resources/ChatterboxModels/` alongside the existing ONNX files. The app uses ONNX by default; CoreML is enabled via a feature flag.
 
 | File | Change |
 |------|--------|
-| `ChatterboxEngine.swift` | Replace `ORTSession` with `MLModel` for each component; simplify decode loop for stateful LM |
-| `project.yml` | Add `.mlmodel` files to bundle resources |
-| `ModelDownloadService.swift` | Point to CoreML models instead of ONNX (or parallel support) |
+| `ChatterboxEngine.swift` | Add `MLModel` loading alongside `ORTSession`; feature flag selects ONNX vs CoreML path; CoreML decode loop uses `mlmodel.predict(state:)` as shown above |
+| `project.yml` | No change — `.mlmodel` files go in the same `ChatterboxModels/` resource directory |
+| `ModelDownloadService.swift` | CoreML models are built locally (not downloaded). For future: could upload to HF and download like ONNX models |
+
+**CoreML model build artifact path:** `chatterbox-turbo-coreml/models/` → copy to `Reader/Resources/ChatterboxModels/`
 
 ---
 
