@@ -212,14 +212,13 @@ final class ChatterboxEngine: ObservableObject {
         if useCoreML {
             do {
                 // Use the V2 dictionary API with NeuralNetwork format for dynamic shape support.
-                // NeuralNetwork format uses the older CoreML compiler which accepts dynamic shapes
-                // via onlyAllowStaticInputShapes=false (no explicit flag needed — it's the default).
-                // Note: kCoremlProviderOption_RequireStaticInputShapes was removed; it was added
-                // in ORT 1.24.x and causes "Unknown option" errors on older CI runners.
+                // NeuralNetwork format uses the older CoreML compiler which accepts dynamic shapes.
+                // Only MLComputeUnits and ModelFormat are safe — all other V2 options
+                // (RequireStaticInputShapes, EnableOnSubgraphs) are version-gated and cause
+                // "Unknown option" errors on older ORT SPM versions (pre-1.24.x).
                 let coremlOptionsV2: [AnyHashable: Any] = [
                     "kCoremlProviderOption_MLComputeUnits": "All",
-                    "kCoremlProviderOption_ModelFormat": "NeuralNetwork",
-                    "kCoremlProviderOption_EnableOnSubgraphs": "1"
+                    "kCoremlProviderOption_ModelFormat": "NeuralNetwork"
                 ]
 
                 try options.appendCoreMLExecutionProvider(withOptionsV2: coremlOptionsV2)
