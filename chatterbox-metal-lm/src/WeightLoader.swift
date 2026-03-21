@@ -44,9 +44,9 @@ final class WeightLoader {
                 continue
             }
 
-            let qBuf = device.makeBuffer(bytes: q, options: .storageModeShared)!
-            let sBuf = device.makeBuffer(bytes: s, options: .storageModeShared)!
-            let zBuf = device.makeBuffer(bytes: z, options: .storageModeShared)!
+            let qBuf = device.makeBuffer(bytes: q, length: q.count, options: .storageModeShared)!
+            let sBuf = device.makeBuffer(bytes: s, length: s.count, options: .storageModeShared)!
+            let zBuf = device.makeBuffer(bytes: z, length: z.count, options: .storageModeShared)!
 
             // Allocate fp16 output buffer for dequantized weight
             let fp16Size = entry.outDim * entry.blockCount * 16 * MemoryLayout<Float16>.size
