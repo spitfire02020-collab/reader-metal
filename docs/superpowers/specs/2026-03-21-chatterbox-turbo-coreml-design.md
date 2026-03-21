@@ -103,7 +103,7 @@ Each export script is self-contained: downloads its ONNX source if not present, 
 **Conversion approach:** Stateful model with `ct.StateType`
 - coremltools 7+ supports **regular inputs alongside state inputs** (confirmed via official docs — `ToyModelWithKVCache` example passes `input_ids` + `causal_mask` as regular inputs with `k_cache`/`v_cache` as states)
 - `inputs_embeds`, `attention_mask`, and `position_ids` remain as **regular inputs** passed every `predict()` call
-- Each of the 24 KV layers becomes a `ct.StateType` with name matching the PyTorch `register_buffer` name (e.g., `k_cache_0`, `v_cache_0`)
+- Each of the 24 KV layers becomes a `ct.StateType` with name matching the **actual ONNX input name** (e.g., `ct.StateType(name="past_key_values.0.key")`)
 - State shape: `[batch_size=1, num_kv_heads=16, seq_len=RangeDim(1, 8192), head_dim=64]` — **upper bound 8192** to handle long audio prefixes (audio tokens can be 750+, text tokens 500+, generated speech 1500+, totaling ~2750+)
 - `minimum_deployment_target=ct.target.iOS18` (required for stateful model support)
 - Swift decode loop: call `predict(inputs_dict, kv_state)` each step; CoreML internally updates KV cache
@@ -111,20 +111,39 @@ Each export script is self-contained: downloads its ONNX source if not present, 
 **Stateful decode loop (Swift):**
 ```swift
 kv_state = mlmodel.makeState()
+var positionId = totalSeqLen  // start from end of prefix
+var maskLen = totalSeqLen     // attention mask length grows each step
 for step in 0..<maxTokens {
     let outputs = try mlmodel.predict(inputs: [
-        "inputs_embeds": nextEmbed,      // regular input
-        "attention_mask": allOnesMask,    // regular input, grows each step
-        "position_ids": stepPositions     // regular input
+        "inputs_embeds": nextEmbed,              // regular input
+        "attention_mask": [Int64](repeating: 1, count: maskLen),  // grows per step
+        "position_ids": [Int64](repeating: positionId, count: 1)  // single position
     ], state: kv_state)
     let logits = outputs["logits"]
     let nextToken = greedyDecode(logits)
     if nextToken == STOP_SPEECH { break }
+    positionId += 1   // increment per decode step
+    maskLen += 1      // mask grows with new token
     // prepare next embed for next step...
 }
 ```
 
-**Key challenge:** coremltools must correctly map 48 ONNX KV tensors → 48 CoreML states
+**State mapping from ONNX → CoreML:**
+```python
+states = [
+    ct.StateType(
+        wrapped_type=ct.TensorType(shape=[1, 16, ct.RangeDim(1, 8192), 64], dtype=np.float16),
+        name="past_key_values.0.key",   # must match actual ONNX input name
+    ),
+    ct.StateType(
+        wrapped_type=ct.TensorType(shape=[1, 16, ct.RangeDim(1, 8192), 64], dtype=np.float16),
+        name="past_key_values.0.value",
+    ),
+    # ... repeat for layers 1-23 (48 total StateType entries)
+]
+```
+
+**Key challenge:** coremltools must correctly map 48 ONNX KV tensors → 48 CoreML states using explicit `ct.StateType(name=...)` that matches ONNX input names.
 
 ---
 
