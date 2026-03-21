@@ -691,8 +691,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/spitfire02020-collab/onnxruntime-swift-package-manager";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = exactVersion;
+				version = 1.24.3;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
