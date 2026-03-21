@@ -35,9 +35,13 @@ __pycache__/
 *.pyo
 venv/
 .venv/
+.venv_onnx/
 
 # Models
 # ChatterboxModels/ - Now included in repo
+
+# ONNX merged model files (downloaded at runtime by ModelDownloadService)
+Reader/Resources/ChatterboxModels/*_merged.onnx
 
 # Claude
 .claude/
