@@ -69,11 +69,15 @@ struct SynthesizedChunk: Sendable {
 // MARK: - Chatterbox Engine
 
 final class ChatterboxEngine: ObservableObject {
-    /// Shared singleton instance - ensures cancellation works across all synthesis requests
+    /// Shared singleton instance - ensures cancellation works across all synthesis tasks
     static let shared = ChatterboxEngine()
 
     @Published var isLoaded = false
-    @Published var isSynthesizing = false
+    private let chunkProcessQueue = DispatchQueue(label: "com.reader.chatterbox.chunk", qos: .userInitiated)
+    private var isSynthesizing = false
+    private var isCancelled = false
+
+
     @Published var synthesisProgress: Double = 0
     @Published var errorMessage: String?
 
@@ -96,7 +100,7 @@ final class ChatterboxEngine: ObservableObject {
     private var speechEncoderSession: ORTSession?
     private var embedTokensSession: ORTSession?
     private var languageModelSession: ORTSession?
-    private var conditionalDecoderSession: ORTSession?
+    // private var conditionalDecoderSession: ORTSession? // Removed: created dynamically per chunk
 
     // Holds all relevant speech encoder outputs.
     // audio_features is used as a prefix in inputs_embeds for the language model
@@ -137,8 +141,13 @@ final class ChatterboxEngine: ObservableObject {
         let env = try ORTEnv(loggingLevel: .warning)
         self.ortEnv = env
 
-        // Create session options with CoreML (NeuralNetwork format) + custom ops
-        let sessionOptions = try createSessionOptions(useCoreML: true)
+        // Use CoreML for all models except the dynamically recompiled one (conditional_decoder is handled separately)
+        let coreMLOptions = try createSessionOptions(useCoreML: true)
+
+        // Disable CoreML specifically for the conditional_decoder. CoreML graph partitioning breaks
+        // the ConstantOfShape node when the input sequence length varies between consecutive chunks,
+        // which causes a fatal 38GB+ memory allocation crash.
+        let cpuOptions = try createSessionOptions(useCoreML: false)
 
         // Use dynamic ONNX models
         let modelPathFn: (ModelComponent) -> URL = { [self] in
@@ -149,30 +158,27 @@ final class ChatterboxEngine: ObservableObject {
         speechEncoderSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.speechEncoder).path,
-            sessionOptions: sessionOptions
+            sessionOptions: coreMLOptions
         )
         chatterboxLogger.info("loadModels: loading embedTokens from: \(modelPathFn(.embedTokens).lastPathComponent)")
         embedTokensSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.embedTokens).path,
-            sessionOptions: sessionOptions
+            sessionOptions: coreMLOptions
         )
         chatterboxLogger.info("loadModels: loading languageModel from: \(modelPathFn(.languageModel).lastPathComponent)")
         languageModelSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.languageModel).path,
-            sessionOptions: sessionOptions
+            sessionOptions: coreMLOptions
         )
-        chatterboxLogger.info("loadModels: loading conditionalDecoder from: \(modelPathFn(.conditionalDecoder).lastPathComponent)")
-        conditionalDecoderSession = try ORTSession(
-            env: env,
-            modelPath: modelPathFn(.conditionalDecoder).path,
-            sessionOptions: sessionOptions
-        )
-        chatterboxLogger.info("loadModels: all models loaded")
+        print("[ChatterboxEngine] Loaded Language Model")
+
+        // Do NOT load conditionalDecoderSession here.
+        // We will instantiate it dynamically per chunk to avoid the CoreML dynamic shape static allocation bug.
 
         isLoaded = true
-        chatterboxLogger.info("loadModels: DONE, isLoaded=\(self.isLoaded)")
+        chatterboxLogger.info("loadModels: all models loaded")
     }
 
     private func createSessionOptions(useCoreML: Bool = true) throws -> ORTSessionOptions {
@@ -718,10 +724,20 @@ final class ChatterboxEngine: ObservableObject {
         generationConfig: ChatterboxConfig
     ) async throws -> [Float] {
         guard let embedSession = embedTokensSession,
-              let lmSession = languageModelSession,
-              let decoderSession = conditionalDecoderSession else {
+              let lmSession = languageModelSession else {
             throw ChatterboxError.modelNotLoaded
         }
+        
+        // Dynamically instantiate Conditional Decoder with CoreML enabled.
+        // Because CoreML graph partitioning caches shapes statically, varying sequence lengths 
+        // across consecutive chunks causes a catastrophic memory allocation bug in ConstantOfShape.
+        // By instantiating a new session per chunk, the cached shape perfectly matches the current chunk!
+        let decoderOptions = try createSessionOptions(useCoreML: true)
+        let decoderPath = await downloadService.modelPath(for: .conditionalDecoder, variant: config.modelVariant).path
+        chatterboxLogger.info("dynamically loading conditionalDecoder ORTSession for chunk...")
+        guard let env = ortEnv else { throw ChatterboxError.inferenceError("ORTEnv not initialized") }
+        let decoderSession = try ORTSession(env: env, modelPath: decoderPath, sessionOptions: decoderOptions)
+
 
         // ── Apply exaggeration + cfg_weight: scale audio features ───────────────
         // Combine both parameters into a single scaling factor:
@@ -1082,7 +1098,7 @@ final class ChatterboxEngine: ObservableObject {
 
         let decoderOutputs = try decoderSession.run(
             withInputs: decoderInputs,
-            outputNames: Set([audioOutputName]),
+            outputNames: [audioOutputName],
             runOptions: nil
         )
 
