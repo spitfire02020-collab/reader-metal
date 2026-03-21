@@ -88,7 +88,6 @@ final class ChatterboxEngine: ObservableObject {
     private let baseConfig: ChatterboxConfig
     private var currentGenerationConfig: ChatterboxConfig  // Set during synthesis
     private let tokenizer = TokenizerService()
-    private let downloadService = ModelDownloadService.shared
 
     // Convenience accessor for current config
     private var config: ChatterboxConfig {
@@ -100,6 +99,7 @@ final class ChatterboxEngine: ObservableObject {
     private var speechEncoderSession: ORTSession?
     private var embedTokensSession: ORTSession?
     private var languageModelSession: ORTSession?
+    private var conditionalDecoderSession: ORTSession?
     // private var conditionalDecoderSession: ORTSession? // Removed: created dynamically per chunk
 
     // Holds all relevant speech encoder outputs.
@@ -124,6 +124,7 @@ final class ChatterboxEngine: ObservableObject {
 
     /// Load all ONNX model components into memory
     @MainActor func loadModels() async throws {
+        let downloadService = ModelDownloadService.shared
         guard downloadService.isModelReady else {
             throw ChatterboxError.modelsNotDownloaded
         }
@@ -150,8 +151,8 @@ final class ChatterboxEngine: ObservableObject {
         let cpuOptions = try createSessionOptions(useCoreML: false)
 
         // Use dynamic ONNX models
-        let modelPathFn: (ModelComponent) -> URL = { [self] in
-            self.downloadService.modelPath(for: $0, variant: self.config.modelVariant)
+        let modelPathFn: (ModelComponent) -> URL = { modelComponent in
+            downloadService.modelPath(for: modelComponent, variant: self.config.modelVariant)
         }
 
         chatterboxLogger.info("loadModels: loading speechEncoder from: \(modelPathFn(.speechEncoder).lastPathComponent)")
@@ -174,8 +175,12 @@ final class ChatterboxEngine: ObservableObject {
         )
         print("[ChatterboxEngine] Loaded Language Model")
 
-        // Do NOT load conditionalDecoderSession here.
-        // We will instantiate it dynamically per chunk to avoid the CoreML dynamic shape static allocation bug.
+        chatterboxLogger.info("loadModels: loading conditionalDecoder from: \(modelPathFn(.conditionalDecoder).lastPathComponent)")
+        conditionalDecoderSession = try ORTSession(
+            env: env,
+            modelPath: modelPathFn(.conditionalDecoder).path,
+            sessionOptions: coreMLOptions
+        )
 
         isLoaded = true
         chatterboxLogger.info("loadModels: all models loaded")
@@ -206,17 +211,18 @@ final class ChatterboxEngine: ObservableObject {
         // onlyAllowStaticInputShapes=false.
         if useCoreML {
             do {
-                let coremlOptions = ORTCoreMLExecutionProviderOptions()
-                // Use NeuralNetwork format (default=false is EXPLICITLY set for clarity).
-                // This avoids E5RT and uses the older MIL compiler which supports dynamic shapes.
-                coremlOptions.createMLProgram = false
-                // Allow flexible shapes for variable-length audio input
-                coremlOptions.onlyAllowStaticInputShapes = false
-                // Enable on subgraphs so CoreML can handle model partitions
-                coremlOptions.enableOnSubgraphs = true
+                // Use the V2 dictionary API to explicitly strictly enforce dynamic shape fallbacks.
+                // The underlying C++ CoreML EP sometimes ignores `.onlyAllowStaticInputShapes = false`
+                // in the V1 API, causing catastrophic 38GB allocation errors when input lengths change.
+                let coremlOptionsV2: [AnyHashable: Any] = [
+                    "kCoremlProviderOption_MLComputeUnits": "All",
+                    "kCoremlProviderOption_ModelFormat": "NeuralNetwork",
+                    "kCoremlProviderOption_RequireStaticInputShapes": "0",
+                    "kCoremlProviderOption_EnableOnSubgraphs": "1"
+                ]
 
-                try options.appendCoreMLExecutionProvider(with: coremlOptions)
-                chatterboxLogger.info("CoreML (NeuralNetwork) execution provider enabled")
+                try options.appendCoreMLExecutionProvider(withOptionsV2: coremlOptionsV2)
+                chatterboxLogger.info("CoreML (NeuralNetwork) execution provider enabled via V2 options")
             } catch {
                 chatterboxLogger.warning("CoreML not available, falling back to CPU: \(error.localizedDescription)")
             }
@@ -376,7 +382,8 @@ final class ChatterboxEngine: ObservableObject {
         if let refURL = referenceAudioURL {
             speakerContext = try await encodeSpeakerVoice(from: refURL)
         } else {
-            speakerContext = try await createDefaultSpeakerContext()
+            let downloadService = ModelDownloadService.shared // Local reference
+            speakerContext = try await createDefaultSpeakerContext(downloadService: downloadService)
         }
         chatterboxLogger.info("synthesize: speaker encoded, processing \(chunks.count) chunk(s)")
 
@@ -604,7 +611,8 @@ final class ChatterboxEngine: ObservableObject {
                     if let refURL = referenceAudioURL {
                         speakerContext = try await self.encodeSpeakerVoice(from: refURL)
                     } else {
-                        speakerContext = try await self.createDefaultSpeakerContext()
+                        let downloadService = ModelDownloadService.shared // Local reference
+                        speakerContext = try await self.createDefaultSpeakerContext(downloadService: downloadService)
                     }
 
                     let stem = outputURL.deletingPathExtension().lastPathComponent
@@ -662,7 +670,7 @@ final class ChatterboxEngine: ObservableObject {
 
     /// Build a default SpeakerContext using the downloaded default_voice.wav, or
     /// falling back to 0.5s of silence if the file is not yet available.
-    @MainActor private func createDefaultSpeakerContext() async throws -> SpeakerContext {
+    @MainActor private func createDefaultSpeakerContext(downloadService: ModelDownloadService) async throws -> SpeakerContext {
         let voicePath = downloadService.defaultVoicePath
         chatterboxLogger.info("createDefaultSpeakerContext: path=\(voicePath.path)")
         chatterboxLogger.info("createDefaultSpeakerContext: exists=\(FileManager.default.fileExists(atPath: voicePath.path))")
@@ -724,22 +732,12 @@ final class ChatterboxEngine: ObservableObject {
         generationConfig: ChatterboxConfig
     ) async throws -> [Float] {
         guard let embedSession = embedTokensSession,
+              let decoderSession = conditionalDecoderSession,
               let lmSession = languageModelSession else {
             throw ChatterboxError.modelNotLoaded
         }
-        
-        // Dynamically instantiate Conditional Decoder with CoreML enabled.
-        // Because CoreML graph partitioning caches shapes statically, varying sequence lengths 
-        // across consecutive chunks causes a catastrophic memory allocation bug in ConstantOfShape.
-        // By instantiating a new session per chunk, the cached shape perfectly matches the current chunk!
-        let decoderOptions = try createSessionOptions(useCoreML: true)
-        let decoderPath = await downloadService.modelPath(for: .conditionalDecoder, variant: config.modelVariant).path
-        chatterboxLogger.info("dynamically loading conditionalDecoder ORTSession for chunk...")
-        guard let env = ortEnv else { throw ChatterboxError.inferenceError("ORTEnv not initialized") }
-        let decoderSession = try ORTSession(env: env, modelPath: decoderPath, sessionOptions: decoderOptions)
 
-
-        // ── Apply exaggeration + cfg_weight: scale audio features ───────────────
+        // Apply exaggeration + cfg_weight: scale audio features ───────────────
         // Combine both parameters into a single scaling factor:
         // - exaggeration: controls emotional intensity (0.25-2.0)
         // - cfg_weight: controls conditioning influence (0.2-1.0)

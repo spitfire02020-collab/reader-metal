@@ -804,11 +804,13 @@ final class PlayerViewModel: ObservableObject {
             let itemArtist = item.displayAuthor
             let itemId = item.id.uuidString
 
+            // Capture engine outside the detached task to satisfy Swift 6 MainActor strictness
+            let engine = self.engine
+
             try await Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self = self else { return }
-                let engine = self.engine
-                let audioPlayer = self.audioPlayer
-
+                
+                // Use captured engine reference
                 try await engine.synthesize(
                     text: "",  // Not used when preChunkedText is provided
                     preChunkedText: chunksToSynthesize,
@@ -863,7 +865,8 @@ final class PlayerViewModel: ObservableObject {
                                     }
                                 }
 
-                                Task { @MainActor in
+                                Task { @MainActor [weak self, audioPlayer] in
+                                    guard let self = self else { return }
                                     if tracker.firstURL == nil {
                                         tracker.firstURL = finalURL
                                         NSLog("[PlayerVM] First chunk, starting streaming playback from index \(chunkIndex)")
@@ -1201,11 +1204,13 @@ final class PlayerViewModel: ObservableObject {
             let itemId = item.id.uuidString
 
             // Run synthesis on background thread to prevent UI freezing
+            // Capture engine and audioPlayer outside the detached task for Swift 6 isolation
+            let engine = self.engine
+            let audioPlayer = self.audioPlayer
+            
             try await Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self = self else { return }
-                let engine = self.engine
-                let audioPlayer = self.audioPlayer
-
+                
                 // Use preChunkedText to only synthesize missing chunks
                 let missingChunks = chunksToSynthesize
                 try await engine.synthesize(
@@ -1331,8 +1336,8 @@ final class PlayerViewModel: ObservableObject {
         if downloadService.isModelReady {
             showModelDownload = false
             await startSynthesis()
-        } else if let error = downloadService.errorMessage {
-            errorMessage = error
+        } else if let errorMessage = downloadService.errorMessage { // Corrected variable name
+            self.errorMessage = errorMessage // Corrected assignment
         }
     }
 
