@@ -4,9 +4,11 @@
 
 **Goal:** Replace ONNX Runtime language model with native Metal compute shaders. One-time float16 export from PyTorch source; all inference via custom Metal kernels. ONNX Runtime stays as fallback.
 
-**Architecture:** Per-layer custom Metal compute kernels (not MPSGraph). Swift owns 48 KV cache MTLBuffers (ring-buffer). `LanguageModelBackend` protocol allows ONNX↔Metal swap in ChatterboxEngine.
+**Architecture:** Custom Metal compute kernels for all operations (QKV matmul, attention, FFN, LayerNorm, activation). Swift dispatches kernels via `MTLComputeCommandEncoder`. Swift owns 48 KV cache MTLBuffers (ring-buffer). `LanguageModelBackend` protocol allows ONNX↔Metal swap in ChatterboxEngine.
 
-**Tech Stack:** Metal 3 (`.metal` shaders), Swift 5.9, Python 3.11 (export), MPSGraph (matmuls in Swift wrapper)
+**Note:** The worktree has MPSGraph-based scaffolding (MPSGEMM, LayerNormPipeline) committed in previous sessions. This plan supersedes that approach — MPSGraph matmuls are replaced with custom `gemm_nt.metal` and `gemm_nn.metal` kernels for full GPU utilization. The existing MPSGEMM class in `MPSGraphEncoder.swift` can be repurposed for verification testing only.
+
+**Tech Stack:** Metal 3 (`.metal` shaders), Swift 5.9, Python 3.11 (export)
 
 ---
 
@@ -153,13 +155,15 @@ from collections import OrderedDict
 def export_lm_float16():
     # ---- 1. Load GPT-2 (t3) model ----
     # Use config matching ChatterboxTurboTTS
+    # GPT-2 Medium: 80 Q heads, 16 KV heads (GQA)
+    # n_head=80 sets total Q heads; n_inner=4096 is intermediate size
     config = GPT2Config(
         vocab_size=6563,
         n_positions=1500,
         n_ctx=1500,
         n_embd=1024,
         n_layer=24,
-        n_head=16,        # num_kv_heads = 16 (MHA, no GQA in PyTorch source)
+        n_head=80,        # total Q heads (GPT-2 Medium default)
         n_inner=4096,
         activation_function="gelu",
         resid_dropout=0.0,
@@ -197,15 +201,16 @@ def export_lm_float16():
         for _ in range(24)
     )
 
-    # Patch: use inputs_embeds directly (not input_ids)
-    # The model's wte (word token embedding) is bypassed
+    # Patch: bypass wte — use pre-computed inputs_embeds directly
+    # GPT2Model.forward signature: hidden_states, attention_mask, position_ids, past_key_values
     class GPT2NoEmbed(torch.nn.Module):
         def __init__(self, base):
             super().__init__()
             self.base = base
-        def forward(self, inputs_embeds, attention_mask, past_key_values):
+        def forward(self, hidden_states, attention_mask, past_key_values):
+            # Pass hidden_states directly (pre-embedded, not raw input_ids)
             return self.base(
-                inputs_embeds=inputs_embeds,
+                hidden_states=hidden_states,      # NOT inputs_embeds — GPT2Model uses hidden_states
                 attention_mask=attention_mask,
                 past_key_values=past_key_values,
                 output_hidden_states=True,
@@ -888,10 +893,11 @@ kernel void group_query_attention(
 // Lightweight version: Q, K, V all in registers (for decode step where seq=1)
 kernel void attention_decode_step(
     device const half* q       [[buffer(0)]],  // [80, 64] Q heads
-    device const half* k       [[buffer(1)]],  // [16, seq, 64] full KV (strided)
-    device const half* v       [[buffer(2)]],  // [16, seq, 64]
+    device const half* k       [[buffer(1)]],  // [16, maxSeqLen, 64] full KV (strided)
+    device const half* v       [[buffer(2)]],  // [16, maxSeqLen, 64]
     device half*         output  [[buffer(3)]],  // [80, 64]
-    constant uint&       seq_len  [[buffer(4)]],  // current seq length
+    constant uint&       seq_len  [[buffer(4)]],  // current read length (1..maxSeqLen)
+    constant uint&       max_seq  [[buffer(5)]],  // allocated buffer length
     uint2 gid [[thread_position_in_grid]]
 ) {
     uint q_head = gid.x;  // 0..79
@@ -904,18 +910,20 @@ kernel void attention_decode_step(
     float q_val = float(q[q_head * HEAD_DIM + d]);
 
     // Compute attention score against all KV positions
+    // K layout: [16, maxSeqLen, 64], stride = maxSeqLen * HEAD_DIM
     float score_sum = 0.0f;
     float weight_sum = 0.0f;
 
     for (uint pos = 0; pos < seq_len; pos++) {
-        float k_val = float(k[kv_head * seq_len * HEAD_DIM + pos * HEAD_DIM + d]);
+        // Use maxSeqLen (allocated) not seq_len (current) for stride
+        uint k_idx = kv_head * max_seq * HEAD_DIM + pos * HEAD_DIM + d;
+        float k_val = float(k[k_idx]);
         float s = q_val * k_val * SCALE;
-        // Causal: only attend to current and past positions
-        if (pos <= 0) {  // decode step: only attend to most recent position
-            float exp_s = exp(s);
-            score_sum += exp_s * float(v[kv_head * seq_len * HEAD_DIM + pos * HEAD_DIM + d]);
-            weight_sum += exp_s;
-        }
+        // Decode step: causal — attend to all previous positions (0..seq_len-1)
+        float exp_s = exp(s);
+        uint v_idx = kv_head * max_seq * HEAD_DIM + pos * HEAD_DIM + d;
+        score_sum += exp_s * float(v[v_idx]);
+        weight_sum += exp_s;
     }
 
     output[q_head * HEAD_DIM + d] = half(weight_sum > 0 ? score_sum / weight_sum : 0.0f);
@@ -1093,10 +1101,9 @@ public final class MetalLMBackend: LanguageModelBackend {
     private var tanhGeluPipeline: MTLComputePipelineState!
     private var causalMaskPipeline: MTLComputePipelineState!
     private var attentionPipeline: MTLComputePipelineState!
-
-    // MPS matmul
-    private let gemm = MPSGEMM(device: MTLDevice)
-    private let dpa: MPSDPA  // For MHA with causal mask
+    private var gemmNTPipeline: MTLComputePipelineState!   // C = A @ B^T
+    private var gemmNNPipeline: MTLComputePipelineState!   // C = A @ B
+    private var residualAddPipeline: MTLComputePipelineState!
 
     // KV Cache
     private var kvCache: KVCacheManager!
@@ -1176,7 +1183,15 @@ public final class MetalLMBackend: LanguageModelBackend {
     }
 
     private func compilePipelines() throws {
-        let kernelNames = ["layer_norm", "tanh_gelu_kernel", "causal_mask_kernel", "group_query_attention"]
+        let kernelNames = [
+            "layer_norm",
+            "tanh_gelu_kernel",
+            "causal_mask_kernel",
+            "group_query_attention",
+            "gemm_nt",     // C = A @ B^T
+            "gemm_nn",     // C = A @ B
+            "residual_add" // element-wise addition on GPU
+        ]
         for name in kernelNames {
             guard let fn = library.makeFunction(name: name) else {
                 throw LMBackendError.kernelNotFound(name)
@@ -1187,6 +1202,9 @@ public final class MetalLMBackend: LanguageModelBackend {
         tanhGeluPipeline = pipelines["tanh_gelu_kernel"]
         causalMaskPipeline = pipelines["causal_mask_kernel"]
         attentionPipeline = pipelines["group_query_attention"]
+        gemmNTPipeline = pipelines["gemm_nt"]
+        gemmNNPipeline = pipelines["gemm_nn"]
+        residualAddPipeline = pipelines["residual_add"]
     }
 
     private func allocateBuffers() {
@@ -1270,26 +1288,45 @@ public final class MetalLMBackend: LanguageModelBackend {
             throw LMBackendError.kernelNotFound("weights manifest at \(weightsDir.path)")
         }
 
-        // Load each weight binary as MTLBuffer
-        // Weight names match ONNX tensor names from export_lm_float16.py
-        let weightNames = [
-            "transformer.wte.weight",  // token embeddings
-            "transformer.wpe.weight",   // position embeddings
-            "transformer.h.0.ln_1.weight", "transformer.h.0.ln_1.bias",
-            "transformer.h.0.attn.c_attn.weight", "transformer.h.0.attn.c_attn.bias",
-            "transformer.h.0.attn.c_proj.weight", "transformer.h.0.attn.c_proj.bias",
-            "transformer.h.0.ln_2.weight", "transformer.h.0.ln_2.bias",
-            "transformer.h.0.mlp.c_fc.weight", "transformer.h.0.mlp.c_fc.bias",
-            "transformer.h.0.mlp.c_proj.weight", "transformer.h.0.mlp.c_proj.bias",
-            // ... all 24 layers
+        // Load manifest to get ONNX tensor names
+        // ONNX export uses its own naming scheme — must match exactly
+        let manifestData = try Data(contentsOf: manifestPath)
+        guard let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any] else {
+            throw LMBackendError.kernelNotFound("invalid weights manifest")
+        }
+
+        // Print tensor names for verification:
+        // The export script (export_lm_float16.py) prints all output tensor names.
+        // Use those exact names here. Common pattern from torch.onnx.export:
+        //   "model.layers.0.self_attn.q_proj.weight"
+        //   "model.layers.0.self_attn.k_proj.weight"
+        //   "model.layers.0.self_attn.v_proj.weight"
+        //   "model.layers.0.self_attn.o_proj.weight"
+        //   "model.layers.0.mlp.fc1.weight"
+        //   "model.layers.0.mlp.fc2.weight"
+        //   "model.final_layernorm.weight"
+        // etc.
+        //
+        // IMPORTANT: Run export_lm_float16.py FIRST, then copy the printed tensor
+        // names into the weightNames list below. The names are model-dependent.
+        let weightNames: [String] = [
+            // "model.layers.0.self_attn.q_proj.weight",  // ← example, run export first!
+            // ... all 24 layers + final_layernorm + lm_head
         ]
 
         for name in weightNames {
             let binPath = weightsDir.appendingPathComponent("\(name).bin")
-            guard let data = try? Data(contentsOf: binPath) else { continue }
+            guard let data = try? Data(contentsOf: binPath) else {
+                print("Warning: weight file not found: \(binPath.path)")
+                continue
+            }
             guard let buf = device.makeBuffer(bytes: data, options: .storageModeShared) else { continue }
             weightBuffers[name] = buf
         }
+
+        // NOTE: wte/wpe (token/position embeddings) are NOT needed.
+        // The turbo model receives pre-computed inputs_embeds from the embed_tokens ONNX model.
+        // We only need the transformer layer weights + final_layernorm + lm_head.
     }
 
     public func forward(
@@ -1306,19 +1343,19 @@ public final class MetalLMBackend: LanguageModelBackend {
             // Layer 0: Pre-LayerNorm
             try runLayerNorm(input: residual, output: ln1OutBuffer, layer: layer, ln: .ln1, cmd: commandBuffer)
 
-            // QKV Projection via MPSGEMM
-            // QKV = ln1_out @ W_qkv^T
-            let qkvWeight = weightBuffers["transformer.h.\(layer).attn.c_attn.weight"]!
-            gemm.matmulTransposeB(
-                commandBuffer: commandBuffer,
+            // QKV Projection via custom Metal kernel (gemm_nt = C = A @ B^T)
+            // QKV = ln1_out @ W_qkv^T  [1,1,1024] @ [1024,7168] → [1,1,7168]
+            let qkvWeight = weightBuffers["model.layers.\(layer).self_attn.q_proj.weight"]!
+            try runGEMM_NT(
                 A: ln1OutBuffer, B: qkvWeight, C: qkvBuffer,
-                batch: 1, S: 1, M: HIDDEN_SIZE, N: 112 * HEAD_DIM
+                M: 1, N: 112 * HEAD_DIM, K: HIDDEN_SIZE,
+                cmd: commandBuffer
             )
 
             // Unpack Q, K, V from qkvBuffer
             // Apply RoPE to Q and K using ropeCosBuffer/ropeSinBuffer
 
-            // GroupQueryAttention via MPSDPA
+            // GroupQueryAttention via custom Metal kernel
             try runAttention(
                 q: qBuffer, k: kBuffer, v: vBuffer,
                 kvReadLength: kvReadLength,
@@ -1326,39 +1363,39 @@ public final class MetalLMBackend: LanguageModelBackend {
                 cmd: commandBuffer
             )
 
-            // O projection: attn_out @ W_o^T
-            let oWeight = weightBuffers["transformer.h.\(layer).attn.c_proj.weight"]!
-            gemm.matmulTransposeB(
-                commandBuffer: commandBuffer,
+            // O projection: attn_out @ W_o^T  [1,1,1024] @ [1024,1024] → [1,1,1024]
+            let oWeight = weightBuffers["model.layers.\(layer).self_attn.o_proj.weight"]!
+            try runGEMM_NT(
                 A: attnOutBuffer, B: oWeight, C: attnOutBuffer,
-                batch: 1, S: 1, M: HIDDEN_SIZE, N: HIDDEN_SIZE
+                M: 1, N: HIDDEN_SIZE, K: HIDDEN_SIZE,
+                cmd: commandBuffer
             )
 
-            // Residual add: x = x + attn_out
-            try residualAdd(&residual, attnOutBuffer, commandBuffer)
+            // Residual add on GPU: x = x + attn_out
+            try runResidualAdd(&residual, attnOutBuffer, cmd: commandBuffer)
 
             // Layer 1: Post-attention LayerNorm
             try runLayerNorm(input: residual, output: ln2OutBuffer, layer: layer, ln: .ln2, cmd: commandBuffer)
 
-            // FFN: interim = Gelu(ln2_out @ W1)
-            let w1Weight = weightBuffers["transformer.h.\(layer).mlp.c_fc.weight"]!
-            gemm.matmulTransposeB(
-                commandBuffer: commandBuffer,
+            // FFN: interim = Gelu(ln2_out @ W1)  [1,1,1024] @ [1024,4096] → [1,1,4096]
+            let w1Weight = weightBuffers["model.layers.\(layer).mlp.fc1.weight"]!
+            try runGEMM_NT(
                 A: ln2OutBuffer, B: w1Weight, C: ffnInterimBuffer,
-                batch: 1, S: 1, M: HIDDEN_SIZE, N: INTERMEDIATE_SIZE
+                M: 1, N: INTERMEDIATE_SIZE, K: HIDDEN_SIZE,
+                cmd: commandBuffer
             )
             try runTanhGelu(input: ffnInterimBuffer, output: ffnInterimBuffer, cmd: commandBuffer)
 
-            // FFN: out = interim * (ln2_out @ W3)
-            let w3Weight = weightBuffers["transformer.h.\(layer).mlp.c_proj.weight"]!
-            gemm.matmulTransposeB(
-                commandBuffer: commandBuffer,
+            // FFN: out = interim * (ln2_out @ W3)  [1,1,4096] @ [4096,1024] → [1,1,1024]
+            let w3Weight = weightBuffers["model.layers.\(layer).mlp.fc2.weight"]!
+            try runGEMM_NN(
                 A: ffnInterimBuffer, B: w3Weight, C: ffnOutBuffer,
-                batch: 1, S: 1, M: INTERMEDIATE_SIZE, N: HIDDEN_SIZE
+                M: 1, N: HIDDEN_SIZE, K: INTERMEDIATE_SIZE,
+                cmd: commandBuffer
             )
 
-            // Residual add: x = x + ffn_out
-            try residualAdd(&residual, ffnOutBuffer, commandBuffer)
+            // Residual add on GPU: x = x + ffn_out
+            try runResidualAdd(&residual, ffnOutBuffer, cmd: commandBuffer)
         }
 
         // Final LayerNorm + LM head
@@ -1401,10 +1438,82 @@ public final class MetalLMBackend: LanguageModelBackend {
         enc.setBuffer(v, offset: 0, index: 2)
         enc.setBuffer(causalMaskBuffer, offset: 0, index: 3)
         enc.setBuffer(attnOutBuffer, offset: 0, index: 4)
-        // ... set workspace and parameters
+        enc.setBuffer(nil, offset: 0, index: 5)  // workspace
 
-        enc.dispatchThreadgroups(MTLSize(width: 80, height: 1, depth: 1),
-                                 threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        var kvLen = UInt32(kvReadLength)
+        var maxSeq = UInt32(maxSeqLen)
+        enc.setBytes(&kvLen, length: MemoryLayout<UInt32>.size, index: 6)
+        enc.setBytes(&maxSeq, length: MemoryLayout<UInt32>.size, index: 7)
+
+        // NOTE: grid is 2D (uint2 gid) not 3D
+        // gid.x = q_head (0..79), gid.y = head_dim (0..63)
+        enc.dispatchThreadgroups(
+            MTLSize(width: NUM_Q_HEADS, height: HEAD_DIM, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+        )
+        enc.endEncoding()
+    }
+
+    private func runGEMM_NT(A: MTLBuffer, B: MTLBuffer, C: MTLBuffer, M: Int, N: Int, K: Int, cmd: MTLCommandBuffer) throws {
+        guard let enc = cmd.makeComputeCommandEncoder() else { throw LMBackendError.commandBufferFailed }
+        enc.setComputePipelineState(gemmNTPipeline)
+        enc.setBuffer(A, offset: 0, index: 0)
+        enc.setBuffer(B, offset: 0, index: 1)
+        enc.setBuffer(C, offset: 0, index: 2)
+
+        var m = UInt32(M), n = UInt32(N), k = UInt32(K)
+        enc.setBytes(&m, length: MemoryLayout<UInt32>.size, index: 3)
+        enc.setBytes(&n, length: MemoryLayout<UInt32>.size, index: 4)
+        enc.setBytes(&k, length: MemoryLayout<UInt32>.size, index: 5)
+
+        // Threadgroup: 16x16 = 256 threads
+        let threadgroupSize = MTLSize(width: 16, height: 16, depth: 1)
+        let numThreadgroups = MTLSize(
+            width: (N + 15) / 16,
+            height: (M + 15) / 16,
+            depth: 1
+        )
+        enc.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
+        enc.endEncoding()
+    }
+
+    private func runGEMM_NN(A: MTLBuffer, B: MTLBuffer, C: MTLBuffer, M: Int, N: Int, K: Int, cmd: MTLCommandBuffer) throws {
+        guard let enc = cmd.makeComputeCommandEncoder() else { throw LMBackendError.commandBufferFailed }
+        enc.setComputePipelineState(gemmNNPipeline)
+        enc.setBuffer(A, offset: 0, index: 0)
+        enc.setBuffer(B, offset: 0, index: 1)
+        enc.setBuffer(C, offset: 0, index: 2)
+
+        var m = UInt32(M), n = UInt32(N), k = UInt32(K)
+        enc.setBytes(&m, length: MemoryLayout<UInt32>.size, index: 3)
+        enc.setBytes(&n, length: MemoryLayout<UInt32>.size, index: 4)
+        enc.setBytes(&k, length: MemoryLayout<UInt32>.size, index: 5)
+
+        let threadgroupSize = MTLSize(width: 16, height: 16, depth: 1)
+        let numThreadgroups = MTLSize(
+            width: (N + 15) / 16,
+            height: (M + 15) / 16,
+            depth: 1
+        )
+        enc.dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup: threadgroupSize)
+        enc.endEncoding()
+    }
+
+    // Runs residual add on GPU (element-wise addition)
+    private func runResidualAdd(_ residual: inout MTLBuffer, _ addend: MTLBuffer, cmd: MTLCommandBuffer) throws {
+        guard let enc = cmd.makeComputeCommandEncoder() else { throw LMBackendError.commandBufferFailed }
+        enc.setComputePipelineState(residualAddPipeline)
+        enc.setBuffer(residual, offset: 0, index: 0)
+        enc.setBuffer(addend, offset: 0, index: 1)
+        enc.setBuffer(residual, offset: 0, index: 2)  // output = residual + addend
+
+        var size = UInt32(HIDDEN_SIZE)
+        enc.setBytes(&size, length: MemoryLayout<UInt32>.size, index: 3)
+
+        enc.dispatchThreadgroups(
+            MTLSize(width: (HIDDEN_SIZE + 255) / 256, height: 1, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+        )
         enc.endEncoding()
     }
 
@@ -1418,16 +1527,6 @@ public final class MetalLMBackend: LanguageModelBackend {
         enc.dispatchThreadgroups(MTLSize(width: (INTERMEDIATE_SIZE + 255) / 256, height: 1, depth: 1),
                                  threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         enc.endEncoding()
-    }
-
-    private func residualAdd(_ residual: inout MTLBuffer, _ addend: MTLBuffer, _ cmd: MTLCommandBuffer) throws {
-        // Element-wise add: residual = residual + addend
-        // Use MPSGraph or a simple Metal kernel
-        let rPtr = residual.contents().assumingMemoryBound(to: Float16.self)
-        let aPtr = addend.contents().assumingMemoryBound(to: Float16.self)
-        for i in 0..<HIDDEN_SIZE {
-            rPtr[i] = Float16(float(rPtr[i]) + float(aPtr[i]))
-        }
     }
 
     private func runFinalLayerNorm(input: MTLBuffer, output: MTLBuffer, cmd: MTLCommandBuffer) throws {

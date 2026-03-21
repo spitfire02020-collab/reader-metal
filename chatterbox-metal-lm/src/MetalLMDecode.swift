@@ -4,6 +4,8 @@ import Metal
 final class MetalLMDecode {
     let forward: MetalLMForward
 
+    var kvCache: KVCacheManager { forward.kvCache }
+
     init(device: MTLDevice, library: MTLLibrary, weightLoader: WeightLoader) throws {
         self.forward = try MetalLMForward(device: device, library: library, weightLoader: weightLoader)
     }
