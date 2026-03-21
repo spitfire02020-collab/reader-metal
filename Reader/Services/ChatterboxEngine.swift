@@ -210,21 +210,41 @@ final class ChatterboxEngine: ObservableObject {
         // compiler which is more permissive and supports dynamic shapes via
         // onlyAllowStaticInputShapes=false.
         if useCoreML {
+            var coremlEnabled = false
+
+            // Strategy: cascade through CoreML configuration approaches from most capable
+            // to least, landing on whichever works for the installed ORT version.
+            // This handles the full range from ancient SPM cached versions (pre-1.24)
+            // to the latest 1.24.2+ where V2 dict options are fully recognized.
+
+            // 1. Try modern V2 dictionary API (ORT 1.24.x): MLComputeUnits + NeuralNetwork format.
+            //    NeuralNetwork format is critical — MLProgram crashes at session creation for our
+            //    variable-length audio models due to strict dynamic-shape rejection in Apple's E5RT compiler.
             do {
-                // Use the V2 dictionary API with NeuralNetwork format for dynamic shape support.
-                // NeuralNetwork format uses the older CoreML compiler which accepts dynamic shapes.
-                // Only MLComputeUnits and ModelFormat are safe — all other V2 options
-                // (RequireStaticInputShapes, EnableOnSubgraphs) are version-gated and cause
-                // "Unknown option" errors on older ORT SPM versions (pre-1.24.x).
                 let coremlOptionsV2: [AnyHashable: Any] = [
                     "kCoremlProviderOption_MLComputeUnits": "All",
                     "kCoremlProviderOption_ModelFormat": "NeuralNetwork"
                 ]
-
                 try options.appendCoreMLExecutionProvider(withOptionsV2: coremlOptionsV2)
-                chatterboxLogger.info("CoreML (NeuralNetwork) execution provider enabled via V2 options")
+                coremlEnabled = true
+                chatterboxLogger.info("CoreML (NeuralNetwork, V2) execution provider enabled")
             } catch {
-                chatterboxLogger.warning("CoreML not available, falling back to CPU: \(error.localizedDescription)")
+                // 2. V2 failed — try non-V2 object API which has existed since early ORT CoreML support.
+                //    This uses ORTCoreMLExecutionProviderOptions with Objective-C property accessors.
+                do {
+                    let opts = ORTCoreMLExecutionProviderOptions()
+                    // Use all available compute units (CPU + Neural Engine).
+                    try options.appendCoreMLExecutionProvider(with: opts)
+                    coremlEnabled = true
+                    chatterboxLogger.info("CoreML (all compute units) execution provider enabled via non-V2 API")
+                } catch {
+                    // All CoreML approaches exhausted — degrade gracefully to CPU.
+                    chatterboxLogger.warning("CoreML not available, falling back to CPU: \(error.localizedDescription)")
+                }
+            }
+
+            if !coremlEnabled {
+                chatterboxLogger.info("Using CPU execution provider")
             }
         } else {
             chatterboxLogger.info("Using CPU execution provider")
