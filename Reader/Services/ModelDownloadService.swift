@@ -202,7 +202,7 @@ final class ModelDownloadService: NSObject, ObservableObject {
     }
 
     func modelPath(for component: ModelComponent, variant: ModelVariant = .q4f16) -> URL {
-        let filename = "\(component.rawValue)\(variant.suffix).onnx"
+        let filename = "\(component.rawValue)\(variant.suffix)_merged.onnx"
 
         // First check bundle - models in bundle are properly structured
         let bundlePath = bundleModelsDirectory.appendingPathComponent(filename)
