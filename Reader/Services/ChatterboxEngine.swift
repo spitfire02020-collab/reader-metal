@@ -211,13 +211,14 @@ final class ChatterboxEngine: ObservableObject {
         // onlyAllowStaticInputShapes=false.
         if useCoreML {
             do {
-                // Use the V2 dictionary API to explicitly strictly enforce dynamic shape fallbacks.
-                // The underlying C++ CoreML EP sometimes ignores `.onlyAllowStaticInputShapes = false`
-                // in the V1 API, causing catastrophic 38GB allocation errors when input lengths change.
+                // Use the V2 dictionary API with NeuralNetwork format for dynamic shape support.
+                // NeuralNetwork format uses the older CoreML compiler which accepts dynamic shapes
+                // via onlyAllowStaticInputShapes=false (no explicit flag needed — it's the default).
+                // Note: kCoremlProviderOption_RequireStaticInputShapes was removed; it was added
+                // in ORT 1.24.x and causes "Unknown option" errors on older CI runners.
                 let coremlOptionsV2: [AnyHashable: Any] = [
                     "kCoremlProviderOption_MLComputeUnits": "All",
                     "kCoremlProviderOption_ModelFormat": "NeuralNetwork",
-                    "kCoremlProviderOption_RequireStaticInputShapes": "0",
                     "kCoremlProviderOption_EnableOnSubgraphs": "1"
                 ]
 
