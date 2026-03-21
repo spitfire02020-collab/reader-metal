@@ -649,14 +649,25 @@ git commit -m "feat(metal-lm): add KVCacheManager actor with ring-buffer KV buff
 
 ---
 
+> **⚠️ Worktree MetalLMConfig.swift needs update before starting:**
+> The existing `chatterbox-metal-lm/src/MetalLMConfig.swift` has `num_heads = 16` (ambiguous) and `maxSequenceLength = 8192` (wrong, should be 1500). Update it before Task 2:
+> ```swift
+> static let numQueryHeads = 80   // Q heads (GPT-2 Medium)
+> static let numKVHeads = 16       // KV heads (GQA)
+> static let headDim = 64
+> static let maxSequenceLength = 1500  // per spec
+> ```
+
+---
+
 ## Task 4: Metal Kernels — TanhGelu + MaskCompute + RoPE
 
 **Files:**
 - Create: `chatterbox-metal-lm/src/TanhGelu.metal`
 - Create: `chatterbox-metal-lm/src/MaskCompute.metal`
-- Create: `chatterbox-metal-lm/src/module.modulemap`
+- Create: `chatterbox-metal-lm/src/GEMMMetal.metal` (new — custom matmul kernels)
 
-**Context:** Three supporting kernels needed by the main LM forward. The main `LMForward.metal` (Task 5) dispatches these.
+**Context:** Three supporting kernels needed by the main LM forward. The main `LMForward.metal` (Task 5) dispatches these. GEMMMetal.metal provides the `gemm_nt` and `gemm_nn` kernels referenced in MetalLMBackend.
 
 - [ ] **Step 1: Write TanhGelu.metal**
 
@@ -702,9 +713,68 @@ kernel void tanh_gelu_inplace(
     float x = float(data[gid]);
     data[gid] = half(gelu_tanh(x));
 }
+- [ ] **Step 2: Write GEMMMetal.metal**
+
+```metal
+#include <metal_stdlib>
+using namespace metal;
+
+// Generic GEMM: C = A @ B (no transpose)
+// A: [M, K], B: [K, N], C: [M, N]
+// Threadgroup: 16x16 threads, each computes one output element
+kernel void gemm_nn(
+    device const half* A    [[buffer(0)]],
+    device const half* B    [[buffer(1)]],
+    device half*       C    [[buffer(2)]],
+    constant uint& M [[buffer(3)]],
+    constant uint& N [[buffer(4)]],
+    constant uint& K [[buffer(5)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= N || gid.y >= M) return;
+
+    float sum = 0.0f;
+    for (uint k = 0; k < K; k++) {
+        sum += float(A[gid.y * K + k]) * float(B[k * N + gid.x]);
+    }
+    C[gid.y * N + gid.x] = half(sum);
+}
+
+// C = A @ B^T (B is stored row-major, logical B^T is column-major)
+// A: [M, K], B: [N, K], C: [M, N]
+kernel void gemm_nt(
+    device const half* A    [[buffer(0)]],
+    device const half* B    [[buffer(1)]],
+    device half*       C    [[buffer(2)]],
+    constant uint& M [[buffer(3)]],
+    constant uint& N [[buffer(4)]],
+    constant uint& K [[buffer(5)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= N || gid.y >= M) return;
+
+    float sum = 0.0f;
+    for (uint k = 0; k < K; k++) {
+        // B[k*N+gid.x] = B^T[gid.x][k]
+        sum += float(A[gid.y * K + k]) * float(B[k * N + gid.x]);
+    }
+    C[gid.y * N + gid.x] = half(sum);
+}
+
+// Residual add: out = a + b (element-wise)
+kernel void residual_add(
+    device const half* a    [[buffer(0)]],
+    device const half* b    [[buffer(1)]],
+    device half*       out  [[buffer(2)]],
+    constant uint& size [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= size) return;
+    out[gid] = half(float(a[gid]) + float(b[gid]));
+}
 ```
 
-- [ ] **Step 2: Write MaskCompute.metal**
+- [ ] **Step 4: Write MaskCompute.metal**
 
 ```metal
 #include <metal_stdlib>

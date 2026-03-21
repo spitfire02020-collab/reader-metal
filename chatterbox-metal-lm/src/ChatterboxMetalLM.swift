@@ -31,7 +31,7 @@ public final class ChatterboxMetalLM {
         }
 
         self.weightLoader = try WeightLoader(device: dev, weightsDir: weightDirectory, library: library)
-        self.decoder = try MetalLMDecode(device: dev, library: library, weightLoader: weightLoader)
+        self.decoder = try MetalLMDecode(device: dev, library: library, weightLoader: weightLoader, repetitionPenalty: repetitionPenalty)
     }
 
     public func reset() {
@@ -52,7 +52,6 @@ public final class ChatterboxMetalLM {
         decoder.reset()
 
         var generatedTokens = [MetalLMConfig.startSpeechToken]
-        let vocab = MetalLMConfig.vocabSize
 
         // TODO: Implement full decode loop
         // 1. Concat [conditioning | text | speech_embed] → input embed

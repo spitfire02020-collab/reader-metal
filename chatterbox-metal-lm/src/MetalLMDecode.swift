@@ -3,11 +3,13 @@ import Metal
 
 final class MetalLMDecode {
     let forward: MetalLMForward
+    let repetitionPenalty: Float
 
     var kvCache: KVCacheManager { forward.kvCache }
 
-    init(device: MTLDevice, library: MTLLibrary, weightLoader: WeightLoader) throws {
+    init(device: MTLDevice, library: MTLLibrary, weightLoader: WeightLoader, repetitionPenalty: Float = 1.2) throws {
         self.forward = try MetalLMForward(device: device, library: library, weightLoader: weightLoader)
+        self.repetitionPenalty = repetitionPenalty
     }
 
     func reset() {
@@ -41,7 +43,7 @@ final class MetalLMDecode {
     }
 
     private func applyRepetitionPenalty(logits: inout [Float], tokens: [Int32]) {
-        let penalty: Float = 1.2
+        let penalty = repetitionPenalty
         for t in tokens {
             let idx = Int(t)
             if idx < logits.count {
