@@ -124,10 +124,11 @@ final class ChatterboxEngine: ObservableObject {
             throw ChatterboxError.modelsNotDownloaded
         }
 
-        // Always use CPU for inference.
-        // CoreML has issues with dynamic shapes and the q4f16 quantized models.
-        // CPU inference is reliable and sufficient for real-time TTS.
-        let useCoreML = false
+        // Enable CoreML with NeuralNetwork format (NOT MLProgram).
+        // MLProgram uses Apple's E5RT/MIL compiler which rejects dynamic shapes for
+        // Slice/Pad operators (common in variable-length audio models).
+        // NeuralNetwork format uses the older CoreML compiler which is more permissive.
+        let useCoreML = true
 
         chatterboxLogger.info("loadModels: loading tokenizer")
         try tokenizer.load(from: downloadService.tokenizerPath)
@@ -136,8 +137,8 @@ final class ChatterboxEngine: ObservableObject {
         let env = try ORTEnv(loggingLevel: .warning)
         self.ortEnv = env
 
-        let sessionOptions = try createSessionOptions(useCoreML: useCoreML)
-        chatterboxLogger.info("loadModels: using dynamic models, CoreML: \(useCoreML)")
+        // Create session options with CoreML (NeuralNetwork format) + custom ops
+        let sessionOptions = try createSessionOptions(useCoreML: true)
 
         // Use dynamic ONNX models
         let modelPathFn: (ModelComponent) -> URL = { [self] in
@@ -185,29 +186,33 @@ final class ChatterboxEngine: ObservableObject {
         let fnPtr = OrtExt.getRegisterCustomOpsFunctionPointer()
         try options.registerCustomOps(functionPointer: fnPtr)
 
-        // Graph optimization: .basic provides speedup without shape inference issues
-        // Extended (.all) can cause shape inference issues with dynamic models
-        try options.setGraphOptimizationLevel(.basic)
+        // Graph optimization: .all for maximum performance after model is loaded
+        try options.setGraphOptimizationLevel(.all)
 
         // Configure threads for parallel processing within operations
         try options.setIntraOpNumThreads(4)
 
-        // Try to use CoreML execution provider for GPU acceleration via Apple Neural Engine
-        // CoreML supports dynamic shapes better than the old CoreML provider
+        // CoreML with NeuralNetwork format (NOT MLProgram).
+        // MLProgram uses Apple's E5RT/MIL compiler which strictly rejects dynamic
+        // shapes for Slice/Pad operators — crashes at session creation for our
+        // variable-length audio models. NeuralNetwork format uses the older CoreML
+        // compiler which is more permissive and supports dynamic shapes via
+        // onlyAllowStaticInputShapes=false.
         if useCoreML {
             do {
                 let coremlOptions = ORTCoreMLExecutionProviderOptions()
-                // Use MLProgram format for better operator support
-                coremlOptions.createMLProgram = true
+                // Use NeuralNetwork format (default=false is EXPLICITLY set for clarity).
+                // This avoids E5RT and uses the older MIL compiler which supports dynamic shapes.
+                coremlOptions.createMLProgram = false
                 // Allow flexible shapes for variable-length audio input
                 coremlOptions.onlyAllowStaticInputShapes = false
-                // Enable on subgraphs for better performance
+                // Enable on subgraphs so CoreML can handle model partitions
                 coremlOptions.enableOnSubgraphs = true
 
                 try options.appendCoreMLExecutionProvider(with: coremlOptions)
-                chatterboxLogger.info("CoreML execution provider enabled (GPU/ANE acceleration)")
+                chatterboxLogger.info("CoreML (NeuralNetwork) execution provider enabled")
             } catch {
-                chatterboxLogger.warning("CoreML not available, using CPU: \(error.localizedDescription)")
+                chatterboxLogger.warning("CoreML not available, falling back to CPU: \(error.localizedDescription)")
             }
         } else {
             chatterboxLogger.info("Using CPU execution provider")
@@ -859,7 +864,18 @@ final class ChatterboxEngine: ObservableObject {
 
         var shouldStopDecoding = false
 
-        for step in 0..<self.config.maxNewTokens {
+        // Phase 1 Optimization: Pre-allocate buffers outside the tight autoregressive loop
+        // to prevent allocating 500+ Swift Arrays per sentence (which triggers ARC thrashing).
+        let dynamicMaxTokens = self.config.maxNewTokens
+        let maxPossibleMaskLen = totalSeqLen + dynamicMaxTokens + 1
+
+        // Pre-allocate the mask buffer as a raw pointer to avoid Swift Array COW overhead
+        let maskBuffer = UnsafeMutableBufferPointer<Int64>.allocate(capacity: maxPossibleMaskLen)
+        defer { maskBuffer.deallocate() }
+        // Fill with ones (attention mask is all-ones)
+        for i in 0..<maxPossibleMaskLen { maskBuffer[i] = 1 }
+
+        for step in 0..<dynamicMaxTokens {
             try Task.checkCancellation()  // Stop if cancelled
             chatterboxLogger.debug("decode step \(step): maxToken=\(self.config.maxNewTokens)")
 
@@ -954,7 +970,6 @@ final class ChatterboxEngine: ObservableObject {
                 // After decode k (step=k, |speechTokens|=k+1): next pos = totalSeqLen + k
                 let nextPos     = Int64(totalSeqLen + speechTokens.count)
                 let nextMaskLen = totalSeqLen + speechTokens.count
-                let nextMask    = Array(repeating: Int64(1), count: nextMaskLen)
 
                 // Debug: Log position IDs at key steps to verify they're correct at step 500+
                 if step == 100 || step == 300 || step == 500 || step == 700 || step == 900 {
@@ -964,8 +979,9 @@ final class ChatterboxEngine: ObservableObject {
                 nextStepInputs = [
                     "inputs_embeds":  nextEmbed,
                     "position_ids":   try createInt64Tensor([nextPos], shape: [1, 1]),
-                    "attention_mask": try createInt64Tensor(
-                        nextMask, shape: [1, NSNumber(value: nextMaskLen)]
+                    // Phase 1 Opt: Reuse pre-allocated mask buffer instead of allocating new array each step
+                    "attention_mask": try fillInt64Tensor(
+                        buffer: maskBuffer, count: nextMaskLen, shape: [1, NSNumber(value: nextMaskLen)]
                     )
                 ]
 
@@ -1183,6 +1199,30 @@ final class ChatterboxEngine: ObservableObject {
         let mutableData = data.withUnsafeBytes {
             NSMutableData(bytes: $0.baseAddress!, length: byteCount)
         }
+        return try ORTValue(
+            tensorData: mutableData,
+            elementType: .int64,
+            shape: shape
+        )
+    }
+
+    /// Create an int64 tensor by filling a pre-allocated buffer.
+    /// The buffer must have at least `count` elements available.
+    /// This avoids repeated heap allocation inside the decode loop.
+    private func fillInt64Tensor(
+        buffer: UnsafeMutableBufferPointer<Int64>,
+        count: Int,
+        shape: [NSNumber]
+    ) throws -> ORTValue {
+        precondition(count <= buffer.count, "Buffer too small: \(buffer.count) < \(count)")
+        // Fill with ones (attention mask pattern)
+        for i in 0..<count {
+            buffer[i] = 1
+        }
+        let mutableData = NSMutableData(
+            bytes: buffer.baseAddress!,
+            length: count * MemoryLayout<Int64>.size
+        )
         return try ORTValue(
             tensorData: mutableData,
             elementType: .int64,
