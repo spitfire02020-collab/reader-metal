@@ -200,7 +200,11 @@ final class ChatterboxEngine: ObservableObject {
         // Graph optimization: .all for maximum performance after model is loaded
         try options.setGraphOptimizationLevel(.all)
 
-        // Configure threads for parallel processing within operations
+        // CPU performance tuning
+        // intra_op_num_threads: parallelize within a single operator (matmul, attention).
+        // On Apple Silicon M-series, num_performance_cores is typically 4 (or 8 on Pro Max).
+        // 4 is a good default for audio workloads which are latency-sensitive.
+        // Note: execution_mode and arena_extend_strategy are not available in SPM ORT.
         try options.setIntraOpNumThreads(4)
 
         // CoreML with NeuralNetwork format (NOT MLProgram).
@@ -873,6 +877,13 @@ final class ChatterboxEngine: ObservableObject {
         // ── Build prefill inputs ───────────────────────────────────────────────
         var lmInputs: [String: ORTValue] = [:]
 
+        // Pre-allocate reusable buffers for the decode loop to avoid per-step heap allocations.
+        // These are reset and reused every step instead of creating new ORTValue objects.
+        let reusableNextTokenBuffer = UnsafeMutableBufferPointer<Int64>.allocate(capacity: 1)
+        defer { reusableNextTokenBuffer.deallocate() }
+        let reusablePositionIdBuffer = UnsafeMutableBufferPointer<Int64>.allocate(capacity: 1)
+        defer { reusablePositionIdBuffer.deallocate() }
+
         // Initialize all KV-cache with empty tensors: [1, numKVHeads, 0, headDim]
         for layer in 0..<numLayers {
             lmInputs["past_key_values.\(layer).key"]   = try createEmptyFloatTensor(
@@ -998,7 +1009,11 @@ final class ChatterboxEngine: ObservableObject {
 
                 // ── Prepare next-step inputs ───────────────────────────────────
                 // Embed the newly generated token: [1, 1] → [1, 1, hiddenDim]
-                let nextTokenTensor = try createInt64Tensor([Int64(generatedToken)], shape: [1, 1])
+                // CPU Opt: Reuse pre-allocated buffer for the token ID tensor.
+                reusableNextTokenBuffer[0] = Int64(generatedToken)
+                let nextTokenTensor = try createInt64TensorFromBuffer(
+                    reusableNextTokenBuffer, count: 1, shape: [1, 1]
+                )
                 let nextEmbedOutputs = try embedSession.run(
                     withInputs: [embedInputName: nextTokenTensor],
                     outputNames: Set([embedOutputName]),
@@ -1015,6 +1030,12 @@ final class ChatterboxEngine: ObservableObject {
                 let nextPos     = Int64(totalSeqLen + speechTokens.count)
                 let nextMaskLen = totalSeqLen + speechTokens.count
 
+                // CPU Opt: Reuse pre-allocated buffers instead of creating new tensors each step.
+                reusablePositionIdBuffer[0] = nextPos
+                let nextPosTensor = try createInt64TensorFromBuffer(
+                    reusablePositionIdBuffer, count: 1, shape: [1, 1]
+                )
+
                 // Debug: Log position IDs at key steps to verify they're correct at step 500+
                 if step == 100 || step == 300 || step == 500 || step == 700 || step == 900 {
                     chatterboxLogger.debug("POSITION CHECK step \(step): nextPos=\(nextPos), maskLen=\(nextMaskLen), totalSeqLen=\(totalSeqLen)")
@@ -1022,8 +1043,8 @@ final class ChatterboxEngine: ObservableObject {
 
                 nextStepInputs = [
                     "inputs_embeds":  nextEmbed,
-                    "position_ids":   try createInt64Tensor([nextPos], shape: [1, 1]),
-                    // Phase 1 Opt: Reuse pre-allocated mask buffer instead of allocating new array each step
+                    "position_ids":   nextPosTensor,
+                    // Reuse pre-allocated mask buffer instead of allocating new array each step
                     "attention_mask": try fillInt64Tensor(
                         buffer: maskBuffer, count: nextMaskLen, shape: [1, NSNumber(value: nextMaskLen)]
                     )
@@ -1243,6 +1264,25 @@ final class ChatterboxEngine: ObservableObject {
         let mutableData = data.withUnsafeBytes {
             NSMutableData(bytes: $0.baseAddress!, length: byteCount)
         }
+        return try ORTValue(
+            tensorData: mutableData,
+            elementType: .int64,
+            shape: shape
+        )
+    }
+
+    /// Create an int64 tensor by wrapping an existing pre-allocated buffer.
+    /// The buffer is NOT copied — the ORTValue references the original memory.
+    /// The caller must keep the buffer alive for the duration of the ORT run.
+    private func createInt64TensorFromBuffer(
+        _ buffer: UnsafeMutableBufferPointer<Int64>,
+        count: Int,
+        shape: [NSNumber]
+    ) throws -> ORTValue {
+        let mutableData = NSMutableData(
+            bytes: buffer.baseAddress!,
+            length: count * MemoryLayout<Int64>.size
+        )
         return try ORTValue(
             tensorData: mutableData,
             elementType: .int64,
