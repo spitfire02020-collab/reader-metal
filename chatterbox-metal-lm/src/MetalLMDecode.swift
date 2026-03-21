@@ -4,6 +4,7 @@ import Metal
 final class MetalLMDecode {
     let forward: MetalLMForward
     let repetitionPenalty: Float
+    private(set) var pastSequenceLength: Int = 0
 
     var kvCache: KVCacheManager { forward.kvCache }
 
@@ -14,18 +15,25 @@ final class MetalLMDecode {
 
     func reset() {
         forward.kvCache.reset()
+        pastSequenceLength = 0
     }
 
-    /// Greedy decode step: argmax + repetition penalty
+    /// Greedy decode step: argmax + repetition penalty.
+    /// Processes the input embed with growing KV cache.
     /// Returns next speech token ID (Int32)
     func step(
         inputsEmbed: MTLBuffer,
         inputLength: Int,
         generatedTokens: [Int32]
     ) throws -> (logits: [Float], nextToken: Int32) {
-        let logitsBuf = try forward.forward(inputs: inputsEmbed, inputLength: inputLength)
+        let logitsBuf = try forward.forward(
+            inputs: inputsEmbed,
+            inputLength: inputLength,
+            pastSequenceLength: pastSequenceLength
+        )
 
-        // logits: [1, seq, vocab]
+        pastSequenceLength += inputLength
+
         let logitsPtr = logitsBuf.contents().bindMemory(to: Float.self, capacity: MetalLMConfig.vocabSize)
         var logits = Array(UnsafeBufferPointer(start: logitsPtr, count: MetalLMConfig.vocabSize))
 

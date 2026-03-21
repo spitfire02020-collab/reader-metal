@@ -1,14 +1,19 @@
 import Foundation
 import Metal
-import MetalPerformanceShaders
+import MetalPerformanceShadersGraph
 
-// MARK: - GEMM Utilities
+// MARK: - GEMM Utilities via MPSGraph
 
+/// MPSGraph-based GEMM operations.
+/// All matrices are [S, M] or [S, N] row-major Float16.
+/// iOS 18+ required (MPSGraph).
 final class MPSGEMM {
     let device: MTLDevice
+    let graph: MPSGraph
 
     init(device: MTLDevice) {
         self.device = device
+        self.graph = MPSGraph()
     }
 
     /// C = A @ B^T (transpose B)
@@ -18,42 +23,55 @@ final class MPSGEMM {
         A: MTLBuffer, B: MTLBuffer, C: MTLBuffer,
         batch: Int, S: Int, M: Int, N: Int
     ) {
-        // B is [N, M] row-major but we want to multiply by B^T ([M, N]).
-        // Use MPSTransposeMatrixDescriptor to create a transposed logical view of B's buffer.
-        let bDesc = MPSTransposeMatrixDescriptor(
-            rows: M, columns: N,
-            rowBytes: N * MemoryLayout<Float16>.stride,
-            dataType: .float16
-        )
-        let mpB = MPSMatrix(buffer: B, matrixDescription: bDesc)
+        let shapeA = [NSNumber(value: S), NSNumber(value: M)]
+        let shapeB = [NSNumber(value: N), NSNumber(value: M)]
+        let shapeC = [NSNumber(value: S), NSNumber(value: N)]
 
-        // C is [S, N]
-        let cDesc = MPSTransposeMatrixDescriptor(
-            rows: S, columns: N,
-            rowBytes: N * MemoryLayout<Float16>.stride,
-            dataType: .float16
+        let tensorA = graph.variable(
+            with: MPSGraphTensorData(A),
+            shape: shapeA,
+            name: "A"
         )
-        let mpC = MPSMatrix(buffer: C, matrixDescription: cDesc)
+        let tensorB = graph.variable(
+            with: MPSGraphTensorData(B),
+            shape: shapeB,
+            name: "B"
+        )
 
-        // A is [S, M]
-        let aDesc = MPSTransposeMatrixDescriptor(
-            rows: S, columns: M,
-            rowBytes: M * MemoryLayout<Float16>.stride,
-            dataType: .float16
-        )
-        let mpA = MPSMatrix(buffer: A, matrixDescription: aDesc)
+        // B^T: transpose B from [N, M] to [M, N]
+        let tensorB_T = graph.transpose(tensorB, axes: [1, 0], name: "B_T")
 
-        // MPSMatrixMultiplication computes C = A @ B.
-        // Since mpB is a transposed view of B, A @ mpB = A @ B^T.
-        let op = MPSMatrixMultiplication(
-            device: device,
-            resultRows: S,
-            resultColumns: N,
-            interiorColumns: M,
-            alpha: 1.0,
-            beta: 0.0
+        // C = A @ B^T
+        let tensorC = graph.matmul(
+            tensorA,
+            tensorB_T,
+            name: "C"
         )
-        op.encode(commandBuffer: commandBuffer, leftMatrix: mpA, rightMatrix: mpB, resultMatrix: mpC)
+
+        let outputTensor = graph.variable(
+            with: MPSGraphTensorData(C),
+            shape: shapeC,
+            name: "C_out"
+        )
+
+        // Bind output
+        graph.bind(outputTensor, to: C)
+
+        let executable = graph.compile(
+            with: device,
+            primaryBatchSize: batch,
+            minimumPower: .any,
+            cacheDirectory: nil
+        )
+
+        executable.run(
+            with: commandBuffer,
+            inputs: [MPSGraphTensorData(A)],
+            intermediateTensors: nil,
+            outputs: [MPSGraphTensorData(C)],
+            options: [],
+            queue: nil
+        )
     }
 
     /// C = A @ B (no transpose)
@@ -63,72 +81,171 @@ final class MPSGEMM {
         A: MTLBuffer, B: MTLBuffer, C: MTLBuffer,
         batch: Int, S: Int, M: Int, N: Int
     ) {
-        let aDesc = MPSTransposeMatrixDescriptor(
-            rows: S, columns: M,
-            rowBytes: M * MemoryLayout<Float16>.stride,
-            dataType: .float16
-        )
-        let bDesc = MPSTransposeMatrixDescriptor(
-            rows: M, columns: N,
-            rowBytes: N * MemoryLayout<Float16>.stride,
-            dataType: .float16
-        )
-        let cDesc = MPSTransposeMatrixDescriptor(
-            rows: S, columns: N,
-            rowBytes: N * MemoryLayout<Float16>.stride,
-            dataType: .float16
-        )
-        let mpA = MPSMatrix(buffer: A, matrixDescription: aDesc)
-        let mpB = MPSMatrix(buffer: B, matrixDescription: bDesc)
-        let mpC = MPSMatrix(buffer: C, matrixDescription: cDesc)
+        let shapeA = [NSNumber(value: S), NSNumber(value: M)]
+        let shapeB = [NSNumber(value: M), NSNumber(value: N)]
+        let shapeC = [NSNumber(value: S), NSNumber(value: N)]
 
-        let op = MPSMatrixMultiplication(
-            device: device,
-            resultRows: S,
-            resultColumns: N,
-            interiorColumns: M,
-            alpha: 1.0,
-            beta: 0.0
+        let tensorA = graph.variable(
+            with: MPSGraphTensorData(A),
+            shape: shapeA,
+            name: "A"
         )
-        op.encode(commandBuffer: commandBuffer, leftMatrix: mpA, rightMatrix: mpB, resultMatrix: mpC)
+        let tensorB = graph.variable(
+            with: MPSGraphTensorData(B),
+            shape: shapeB,
+            name: "B"
+        )
+
+        let tensorC = graph.matmul(tensorA, tensorB, name: "C")
+
+        graph.bind(tensorC, to: C)
+
+        let executable = graph.compile(
+            with: device,
+            primaryBatchSize: batch,
+            minimumPower: .any,
+            cacheDirectory: nil
+        )
+
+        executable.run(
+            with: commandBuffer,
+            inputs: [MPSGraphTensorData(A)],
+            intermediateTensors: nil,
+            outputs: [MPSGraphTensorData(C)],
+            options: [],
+            queue: nil
+        )
     }
 }
 
 // MARK: - SDPA (Multi-head Attention with Causal Mask)
 
+/// Scaled Dot-Product Attention with causal masking.
+/// Q: [B, S, H*D], K: [B, S_full, H*D], V: [B, S_full, H*D]
+/// Returns: [B, S, H*D]
+/// iOS 18+ required (MPSGraph).
 final class MPSDPA {
     let device: MTLDevice
+    let graph: MPSGraph
 
     init(device: MTLDevice) {
         self.device = device
+        self.graph = MPSGraph()
     }
 
-    /// Multi-head attention with causal masking
-    /// Q: [B, S, H*D], K: [B, S_full, H*D], V: [B, S_full, H*D]
-    /// Returns: [B, S, H*D]
     func forward(
         commandBuffer: MTLCommandBuffer,
         Q: MTLBuffer, K: MTLBuffer, V: MTLBuffer,
         B: Int, S: Int, S_full: Int, H: Int, D: Int,
         output: MTLBuffer
     ) {
-        // MPSGraph multi-head attention with causal mask
-        // For decode steps: S_full = past_seq + S (full KV length)
-        // For prefix: S_full = S (no KV cache yet)
-        //
-        // IMPORTANT: iOS 18+ required for MPSGraph multiHeadAttention
-        // with proper attentionMask support. The attentionMask should
-        // be a causal lower-triangular mask where positions that should
-        // attend have 0 and masked positions have -inf.
+        // Reshape [B, S, H*D] → [B, H, S, D]
+        let qShapeBHSD = [NSNumber(value: B), NSNumber(value: H), NSNumber(value: S), NSNumber(value: D)]
+        let kShapeBHSD = [NSNumber(value: B), NSNumber(value: H), NSNumber(value: S_full), NSNumber(value: D)]
+
+        let qFlat = graph.variable(
+            with: MPSGraphTensorData(Q),
+            shape: [NSNumber(value: B), NSNumber(value: S), NSNumber(value: H * D)],
+            name: "Q_flat"
+        )
+        let kFlat = graph.variable(
+            with: MPSGraphTensorData(K),
+            shape: [NSNumber(value: B), NSNumber(value: S_full), NSNumber(value: H * D)],
+            name: "K_flat"
+        )
+        let vFlat = graph.variable(
+            with: MPSGraphTensorData(V),
+            shape: [NSNumber(value: B), NSNumber(value: S_full), NSNumber(value: H * D)],
+            name: "V_flat"
+        )
+
+        // Reshape to [B, H, S, D]
+        let qTensor = graph.reshape(qFlat, shape: qShapeBHSD, name: "Q")
+        let kTensor = graph.reshape(kFlat, shape: kShapeBHSD, name: "K")
+        let vTensor = graph.reshape(vFlat, shape: kShapeBHSD, name: "V")
+
+        // ----- Causal mask -----
+        // mask[i, j] = 1 if j <= i (can attend), else 0
+        // For decode step (S=1): position 0 attends to all S_full positions
+        var maskValues = [Float](repeating: 0, count: S * S_full)
+        if S == 1 {
+            // Decode step: single query, attend to all key positions
+            for j in 0..<S_full {
+                maskValues[j] = 1.0
+            }
+        } else {
+            // Prefix: causal mask
+            for i in 0..<S {
+                for j in 0..<S_full {
+                    maskValues[i * S_full + j] = (j <= i) ? 1.0 : 0.0
+                }
+            }
+        }
+
+        let maskConst = graph.constant(maskValues, shape: [NSNumber(value: S), NSNumber(value: S_full)], name: "causalMask")
+
+        // Expand mask to [1, 1, S, S_full] for broadcasting over B and H
+        let maskExpanded = graph.expandDims(maskConst, axes: [0, 1], name: "maskExpanded")
+
+        // ----- Scaled dot-product attention -----
+        // scale = 1 / sqrt(D)
+        let scaleConst = graph.constant(Float(1.0 / sqrt(Double(D))), name: "scale")
+
+        // Q @ K^T: [B,H,S,D] @ [B,H,D,S_full] → [B,H,S,S_full]
+        let qkt = graph.matmul(qTensor, kTensor, name: nil, resulttranspose: false, lefttranspose: false, righttranspose: true)
+
+        let scaledQKT = graph.multiply(qkt, scaleConst, name: "scaledQKT")
+
+        // Apply mask: masked positions → -inf
+        let negInf = graph.constant(-Float.infinity, name: "negInf")
+        // select(condition, trueTensor, falseTensor)
+        // Where maskExpanded == 1 → keep scaledQKT, else → -inf
+        let maskedQKT = graph.select(
+            condition: maskExpanded,
+            trueTensor: scaledQKT,
+            falseTensor: negInf,
+            name: "maskedQKT"
+        )
+
+        // Softmax over last axis (S_full)
+        let attnWeights = graph.softMax(maskedQKT, axis: NSNumber(value: S_full - 1), name: "attnWeights")
+
+        // attnWeights @ V: [B,H,S,S_full] @ [B,H,S_full,D] → [B,H,S,D]
+        let attnResult = graph.matmul(attnWeights, vTensor, name: nil)
+
+        // Reshape [B,H,S,D] → [B,S,H*D]
+        let outputShapeFlat = [NSNumber(value: B), NSNumber(value: S), NSNumber(value: H * D)]
+        let outputFlat = graph.reshape(attnResult, shape: outputShapeFlat, name: "attnOutputFlat")
+
+        // Bind output to buffer
+        graph.bind(outputFlat, to: output)
+
+        // Compile and run
+        let executable = graph.compile(
+            with: device,
+            primaryBatchSize: B,
+            minimumPower: .any,
+            cacheDirectory: nil
+        )
+
+        executable.run(
+            with: commandBuffer,
+            inputs: [MPSGraphTensorData(Q), MPSGraphTensorData(K), MPSGraphTensorData(V)],
+            intermediateTensors: nil,
+            outputs: [MPSGraphTensorData(output)],
+            options: [],
+            queue: nil
+        )
     }
 }
 
 // MARK: - LayerNorm (Metal compute pipeline)
 
+/// LayerNorm via custom Metal compute kernel (not MPSGraph).
+/// y = (x - mean) / sqrt(var + eps) * gamma + beta
 final class LayerNormPipeline {
     let device: MTLDevice
     let pipeline: MTLComputePipelineState
-    let maxThreads: MTLSize
 
     init(device: MTLDevice, library: MTLLibrary) throws {
         self.device = device
@@ -136,12 +253,10 @@ final class LayerNormPipeline {
             throw MetalLMError.kernelNotFound("layer_norm")
         }
         self.pipeline = try device.makeComputePipelineState(function: kern)
-        self.maxThreads = MTLSize(
-            width: pipeline.maxTotalThreadsPerThreadgroup,
-            height: 1, depth: 1
-        )
     }
 
+    /// Normalize a [batch, dim] input matrix.
+    /// Each row is normalized independently.
     func normalize(
         commandBuffer: MTLCommandBuffer,
         input: MTLBuffer, gamma: MTLBuffer, beta: MTLBuffer, output: MTLBuffer,
@@ -155,72 +270,13 @@ final class LayerNormPipeline {
         enc.setBuffer(output, offset: 0, index: 3)
 
         var d = UInt32(dim)
-        var e: Float16 = Float16(1e-5)
+        var eps: Float16 = Float16(1e-5)
         enc.setBytes(&d, length: MemoryLayout<UInt32>.size, index: 4)
-        enc.setBytes(&e, length: MemoryLayout<Float16>.size, index: 5)
+        enc.setBytes(&eps, length: MemoryLayout<Float16>.size, index: 5)
 
-        let tgWidth = min(256, pipeline.maxTotalThreadsPerThreadgroup)
-        let threadsPerGroup = MTLSize(width: tgWidth, height: 1, depth: 1)
-        let numThreadGroups = MTLSize(
-            width: (batch + tgWidth - 1) / tgWidth,
-            height: batch,
-            depth: 1
-        )
+        let threadsPerGroup = MTLSize(width: 256, height: 1, depth: 1)
+        let numThreadGroups = MTLSize(width: (batch + 255) / 256, height: 1, depth: 1)
         enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)
         enc.endEncoding()
     }
-}
-
-// MARK: - GPT2 Block Forward Pass
-
-final class GPT2BlockForward {
-    let device: MTLDevice
-    let gemm: MPSGEMM
-    let dpa: MPSDPA
-    let ln1: LayerNormPipeline
-    let ln2: LayerNormPipeline
-
-    // Pre-allocated temporary buffers (reused across calls)
-    let qBuf: MTLBuffer
-    let kBuf: MTLBuffer
-    let vBuf: MTLBuffer
-    let attnBuf: MTLBuffer
-    let qkBuf: MTLBuffer
-    let attnWeights: MTLBuffer
-    let fc1Out: MTLBuffer
-    let fc2Out: MTLBuffer
-
-    init(device: MTLDevice, library: MTLLibrary) throws {
-        self.device = device
-        self.gemm = MPSGEMM(device: device)
-        self.dpa = MPSDPA(device: device)
-        self.ln1 = try LayerNormPipeline(device: device, library: library)
-        self.ln2 = try LayerNormPipeline(device: device, library: library)
-
-        // Pre-allocate temp buffers
-        let hidden = MetalLMConfig.hiddenSize
-        let intermediate = MetalLMConfig.intermediateSize
-        let maxSeq = MetalLMConfig.maxSequenceLength
-        let heads = MetalLMConfig.num_heads
-        let headDim = MetalLMConfig.headDim
-
-        qBuf = device.makeBuffer(length: maxSeq * heads * headDim * MemoryLayout<Float16>.size, options: .storageModeShared)!
-        kBuf = device.makeBuffer(length: maxSeq * heads * headDim * MemoryLayout<Float16>.size, options: .storageModeShared)!
-        vBuf = device.makeBuffer(length: maxSeq * heads * headDim * MemoryLayout<Float16>.size, options: .storageModeShared)!
-        attnBuf = device.makeBuffer(length: maxSeq * heads * headDim * MemoryLayout<Float16>.size, options: .storageModeShared)!
-        qkBuf = device.makeBuffer(length: maxSeq * maxSeq * MemoryLayout<Float16>.size, options: .storageModeShared)!
-        attnWeights = device.makeBuffer(length: maxSeq * hidden * MemoryLayout<Float16>.size, options: .storageModeShared)!
-        fc1Out = device.makeBuffer(length: maxSeq * intermediate * MemoryLayout<Float16>.size, options: .storageModeShared)!
-        fc2Out = device.makeBuffer(length: maxSeq * hidden * MemoryLayout<Float16>.size, options: .storageModeShared)!
-    }
-
-    // TODO: Implement full GPT2 block forward pass
-    // The actual implementation should:
-    // 1. LayerNorm on input
-    // 2. QKV projections (3x matmulTransposeB with dequantized weights)
-    // 3. SDPA with causal mask
-    // 4. O projection (matmul with dequantized weights)
-    // 5. Residual add
-    // 6. LayerNorm
-    // 7. FFN: FC1 (matmulTransposeB) -> GELU -> FC2 (matmulTransposeB) -> residual add
 }
