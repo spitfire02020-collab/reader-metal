@@ -57,7 +57,7 @@ packages:
     from: "0.15.0"
   onnxruntime:
     url: https://github.com/spitfire02020-collab/onnxruntime-swift-package-manager
-    branch: main
+    version: "1.24.3"
 
 schemes:
   Reader:
