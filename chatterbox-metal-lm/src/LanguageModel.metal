@@ -35,3 +35,40 @@ kernel void dequant_q4f16(
         output[out_base + col] = val * scale;
     }
 }
+
+// LayerNorm: y = (x - mean) / sqrt(var + eps) * gamma + beta
+kernel void layer_norm(
+    device const half*  input  [[buffer(0)]],
+    device const half*  gamma  [[buffer(1)]],  // weight [dim]
+    device const half*  beta   [[buffer(2)]],  // bias [dim]
+    device half*         output [[buffer(3)]],
+    constant uint&       dim    [[buffer(4)]],
+    constant half&       eps    [[buffer(5)]],
+    uint2               gid [[thread_position_in_grid]]) {
+    uint row = gid.y;
+    uint batch_size = gid.x;  // batch = grid y
+    if (row >= batch_size) return;
+
+    uint offset = row * dim;
+
+    // Compute mean
+    half sum = 0;
+    for (uint i = 0; i < dim; i++) sum += input[offset + i];
+    half mean = sum / half(dim);
+
+    // Compute variance
+    half sq_sum = 0;
+    for (uint i = 0; i < dim; i++) {
+        half diff = input[offset + i] - mean;
+        sq_sum += diff * diff;
+    }
+    half var = sq_sum / half(dim);
+    half inv_std = metal::rsqrt(var + eps);
+
+    // Normalize + affine
+    for (uint i = 0; i < dim; i++) {
+        half x = input[offset + i];
+        half norm = (x - mean) * inv_std;
+        output[offset + i] = norm * gamma[i] + beta[i];
+    }
+}
