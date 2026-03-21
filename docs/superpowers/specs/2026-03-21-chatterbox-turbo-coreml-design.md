@@ -2,7 +2,9 @@
 
 ## Overview
 
-Convert the 4 ONNX models from `ResembleAI/chatterbox-turbo-ONNX` to Apple's CoreML format. The resulting `.mlmodel` files will replace ONNX Runtime in the Reader iOS app, enabling native Apple Silicon GPU acceleration and eliminating the ONNX Runtime dependency for inference.
+**Status: ON HOLD — Critical blockers identified (see §Blockers)**
+
+Convert the 4 ONNX models from `ResembleAI/chatterbox-turbo-ONNX` to Apple's CoreML format. The resulting `.mlmodel` files would replace ONNX Runtime in the Reader iOS app, enabling native Apple Silicon GPU acceleration and eliminating the ONNX Runtime dependency for inference.
 
 **Repository:** New standalone repo (TBD — `chatterbox-turbo-coreml`)
 
@@ -12,157 +14,158 @@ Convert the 4 ONNX models from `ResembleAI/chatterbox-turbo-ONNX` to Apple's Cor
 
 ---
 
-## Repository Layout
+## Blockers (2026-03-21)
+
+### Blocker 1: ONNX Converter Removed from coremltools
+
+coremltools v6+ **removed the ONNX converter entirely**. No version of coremltools currently supports direct ONNX→CoreML conversion.
+
+- coremltools 9.0 (latest): only PyTorch, TensorFlow, sklearn, xgboost, libsvm converters
+- coremltools 7.1: same — no ONNX converter
+- coremltools 5.2: last version with ONNX converter, but NumPy 2.x incompatibility prevents use
+
+**Impact:** Direct ONNX→CoreML path is closed permanently in current coremltools.
+
+### Blocker 2: PyTorch GPT2Model Blocked by `aten::diff`
+
+The PyTorch GPT2Model uses `torch.diff` internally (from `transformers.masking_utils`) for causal mask computation. Neither ONNX nor CoreML converters support this operator:
+
+- ONNX export: `Exporting the operator 'aten::diff' to ONNX opset version 17 is not supported`
+- coremltools 7.1 conversion: `PyTorch convert function for op 'diff' not implemented`
+
+This cannot be worked around without modifying the transformers library source.
+
+### Blocker 3: Architecture Mismatch — MHA vs GroupQueryAttention
+
+The ONNX `language_model_q4f16.onnx` uses `GroupQueryAttention` (GQA) with 16 KV heads and MatMulNBits quantization (145 quantized matmul ops). The PyTorch `ChatterboxTurboTTS` uses standard HuggingFace GPT2Model with regular Multi-Head Attention.
+
+These are **mathematically different attention mechanisms** — they produce equivalent results but with different intermediate values. Even if conversion were possible, outputs would not match the ONNX reference, producing different speech.
+
+### Partial Successes
+
+The following components CAN be converted:
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `text_emb` (Embedding 50276×1024) | ✅ WORKS | `torch.jit.trace` + coremltools 7.1 |
+| `speech_emb` (Embedding 6563×1024) | ✅ WORKS | `torch.jit.trace` + coremltools 7.1 |
+| GPT2Block (single layer) | ✅ WORKS | Traces with explicit KV tuple; returns hidden_states only (KV updated in-place, not returned) |
+| S3Gen tokenizer | ❌ BLOCKED | Uses `complex64` STFT — not supported in CoreML |
+| S3Gen flow (decoder) | ❌ BLOCKED | Uses Python `timedelta` — not traceable |
+| VoiceEncoder | ❌ BLOCKED | `embeds_from_wavs` takes `(Tensor, int)` tuple — not traceable |
+
+---
+
+## Revised Approach
+
+Given the blockers above, the following paths are under consideration:
+
+### Option A: Partial Conversion (embed_tokens only)
+
+Convert only the `text_emb` and `speech_emb` embedding tables via `torch.jit.trace` + coremltools. These are the simplest components — just lookup tables.
+
+**Pros:** Guaranteed to work, minimal complexity
+**Cons:** Only replaces 2 of 4 ONNX models; LM and decoder still need ONNX Runtime
+
+**Implementation:** Trivially exportable — single `torch.nn.Embedding` layer.
+
+### Option B: Hybrid ONNX + CoreML
+
+Use ONNX Runtime for LM and decoder (the heavy inference components), CoreML for embedding tables. This reduces ONNX Runtime overhead for the embedding lookup but leaves the heavy inference on ORT.
+
+**Pros:** Addresses the primary CPU bottleneck (embedding) while keeping proven ONNX pipeline
+**Cons:** Doesn't eliminate ONNX Runtime dependency; hybrid complexity
+
+### Option C: Metal Compute Shaders
+
+Replace ONNX Runtime entirely with custom Metal compute shaders for the speech pipeline. This is the most complex but eliminates all third-party inference dependencies.
+
+**Pros:** Full control, no ORT dependency, optimized for Apple Silicon
+**Cons:** Significant engineering effort; would need to reimplement GPT-2 attention, GQA, quantization in Metal
+
+### Recommended: Option A (Partial Conversion)
+
+Start with the embedding tables — they are proven to convert successfully and will exercise the full conversion pipeline without blocker risk.
+
+---
+
+## Repository Layout (Option A focus)
 
 ```
 chatterbox-turbo-coreml/
 ├── scripts/
-│   ├── download_models.py          # Download from HF ONNX repo
-│   ├── export_speech_encoder.py    # Audio → .mlmodel
-│   ├── export_embed_tokens.py       # Tokens → embeddings
-│   ├── export_language_model.py    # LM with KV cache states
-│   ├── export_decoder.py           # Tokens → waveform
-│   └── verify_conversion.py        # Numerical comparison helper
+│   ├── export_embed_tokens.py       # Text + speech embeddings → .mlmodel
+│   ├── export_embed_tokens_test.py  # Verify against ONNX reference
+│   └── verify_conversion.py          # Numerical comparison helper
 ├── tests/
-│   ├── test_speech_encoder.py
 │   ├── test_embed_tokens.py
-│   ├── test_language_model.py
-│   ├── test_decoder.py
-│   └── test_pipeline.py            # Full E2E integration
+│   └── test_pipeline_hybrid.py       # Hybrid ONNX + CoreML pipeline
 ├── requirements.txt
 ├── README.md
 └── models/                          # Output .mlmodel files
 ```
 
-Each export script is self-contained: downloads its ONNX source if not present, converts, and verifies in one shot.
-
 ---
 
-## Model Components & Conversion Strategy
+## Model Components & Conversion Status
 
-### 1. Speech Encoder
+### 1. Embed Tokens — CONVERTABLE ✅
+
+**Status:** Verified working — both `text_emb` and `speech_emb` convert successfully with `torch.jit.trace` + coremltools 7.1.
+
+**PyTorch source:** `ChatterboxTurboTTS.t3.text_emb` and `ChatterboxTurboTTS.t3.speech_emb`
+
+**Conversion:**
+```python
+text_emb = t3.text_emb  # Embedding(50276, 1024)
+speech_emb = t3.speech_emb  # Embedding(6563, 1024)
+
+class EmbedWrapper(torch.nn.Module):
+    def __init__(self, emb):
+        super().__init__()
+        self.emb = emb
+    def forward(self, ids):
+        return self.emb(ids)
+
+# Traced → converted
+mlmodel = ct.convert(traced, source='pytorch',
+    inputs=[ct.TensorType(shape=(1, ct.RangeDim(1, 2048)))])
+```
+
+**Output shapes:**
+- `text_emb`: input_ids(int64) → inputs_embeds(float32) [B, seq, 1024]
+- `speech_emb`: speech_ids(int64) → inputs_embeds(float32) [B, seq, 1024]
+
+**Note:** The two embedding tables are separate modules. Both must be converted and used in the synthesis pipeline.
+
+### 2. Speech Encoder — NOT TESTED YET
 
 **ONNX source:** `speech_encoder_q4f16.onnx`
-**Size:** ~25 MB (quantized)
 
-**I/O Contract (from ONNX metadata):**
-- Input:  `audio_values: [batch_size, num_samples]` — float32, fully dynamic length
-- Outputs:
-  - `audio_features: [batch_size, sequence_length, 1024]` — float16
-  - `audio_tokens: [batch_size, audio_sequence_length]` — int64
-  - `speaker_embeddings: [batch_size, 192]` — float16
-  - `speaker_features: [batch_size, feature_dim, 80]` — float16
+**Expected issues:** Uses complex-valued STFT operations. CoreML does not support complex dtypes (`complex64`, `complex128`).
 
-**Conversion approach:** Stateless, `RangeDim` for audio length
-- Use `ct.RangeDim(lower_bound=24000, upper_bound=240000)` for `num_samples` (1s–10s audio at 24kHz)
-- All outputs are bounded via `ct.RangeDim`
-- `minimum_deployment_target=iOS18`, `compute_units=CPU_AND_GPU`
+**Status:** Not yet tested with `torch.jit.trace`.
 
-**Conversion path:** `torch.jit.trace` or `ct.converters.onnx.convert`
-
----
-
-### 2. Embed Tokens
-
-**ONNX source:** `embed_tokens_q4f16.onnx`
-**Size:** ~60 MB (quantized)
-
-**I/O Contract:**
-- Input:  `input_ids: [batch_size, sequence_length]` — int64, dynamic
-- Output: `inputs_embeds: [batch_size, sequence_length, 1024]` — float16
-
-**Conversion approach:** Stateless, `RangeDim` for sequence length
-- Use `ct.RangeDim(lower_bound=1, upper_bound=2048)` for `sequence_length`
-- Simple embedding lookup — no special state handling needed
-- `minimum_deployment_target=iOS18`, `compute_units=CPU_AND_GPU`
-
-**Note on token ID ranges:** `embed_tokens` accepts two types of token IDs:
-- **Text tokens:** GPT-2 byte-level BPE IDs (0–50256) during text embedding phase
-- **Speech tokens:** Generated speech IDs (0–6562) during the decode loop (to embed the LM's own output for next-token prediction)
-- The single embedding table internally handles both ranges. CoreML conversion preserves this routing — the same `embed_tokens.mlmodel` is called twice per synthesis: once with text IDs, once per decode step with speech IDs.
-
----
-
-### 3. Language Model (Complex — Stateful)
+### 3. Language Model — BLOCKED ❌
 
 **ONNX source:** `language_model_q4f16.onnx`
-**Size:** ~280 MB (quantized)
-**Architecture:** GPT-2 based, 24 layers, 16 KV heads, 64 head_dim, 1024 hidden_size
 
-**I/O Contract (48 KV cache tensors):**
-- Inputs:
-  - `inputs_embeds: [batch_size, sequence_length, 1024]` — float16
-  - `attention_mask: [batch_size, total_sequence_length]` — int64
-  - `position_ids: [batch_size, sequence_length]` — int64
-  - 24 × `past_key_values.N.key: [batch_size, 16, past_sequence_length, 64]` — float16
-  - 24 × `past_key_values.N.value: [batch_size, 16, past_sequence_length, 64]` — float16
-- Outputs:
-  - `logits: [batch_size, sequence_length, 6563]` — float16
-  - 24 × `present.N.key` + 24 × `present.N.value` — same shapes as inputs
+**Blockers:**
+1. coremltools has no ONNX converter (removed in v6)
+2. PyTorch GPT2Model blocked by `aten::diff` from `transformers.masking_utils`
+3. Architecture mismatch: PyTorch MHA ≠ ONNX GroupQueryAttention
 
-**Conversion approach:** Stateful model with `ct.StateType`
-- coremltools 7+ supports **regular inputs alongside state inputs** (confirmed via official docs — `ToyModelWithKVCache` example passes `input_ids` + `causal_mask` as regular inputs with `k_cache`/`v_cache` as states)
-- `inputs_embeds`, `attention_mask`, and `position_ids` remain as **regular inputs** passed every `predict()` call
-- Each of the 24 KV layers becomes a `ct.StateType` with name matching the **actual ONNX input name** (e.g., `ct.StateType(name="past_key_values.0.key")`)
-- State shape: `[batch_size=1, num_kv_heads=16, seq_len=RangeDim(1, 8192), head_dim=64]` — **upper bound 8192** to handle long audio prefixes (audio tokens can be 750+, text tokens 500+, generated speech 1500+, totaling ~2750+)
-- `minimum_deployment_target=ct.target.iOS18` (required for stateful model support)
-- Swift decode loop: call `predict(inputs_dict, kv_state)` each step; CoreML internally updates KV cache
+**Status:** Not convertible with current tools.
 
-**Stateful decode loop (Swift):**
-```swift
-kv_state = mlmodel.makeState()
-var positionId = totalSeqLen  // start from end of prefix
-var maskLen = totalSeqLen     // attention mask length grows each step
-for step in 0..<maxTokens {
-    let outputs = try mlmodel.predict(inputs: [
-        "inputs_embeds": nextEmbed,              // regular input
-        "attention_mask": [Int64](repeating: 1, count: maskLen),  // grows per step
-        "position_ids": [Int64](repeating: positionId, count: 1)  // single position
-    ], state: kv_state)
-    let logits = outputs["logits"]
-    let nextToken = greedyDecode(logits)
-    if nextToken == STOP_SPEECH { break }
-    positionId += 1   // increment per decode step
-    maskLen += 1      // mask grows with new token
-    // prepare next embed for next step...
-}
-```
-
-**State mapping from ONNX → CoreML:**
-```python
-states = [
-    ct.StateType(
-        wrapped_type=ct.TensorType(shape=[1, 16, ct.RangeDim(1, 8192), 64], dtype=np.float16),
-        name="past_key_values.0.key",   # must match actual ONNX input name
-    ),
-    ct.StateType(
-        wrapped_type=ct.TensorType(shape=[1, 16, ct.RangeDim(1, 8192), 64], dtype=np.float16),
-        name="past_key_values.0.value",
-    ),
-    # ... repeat for layers 1-23 (48 total StateType entries)
-]
-```
-
-**Key challenge:** coremltools must correctly map 48 ONNX KV tensors → 48 CoreML states using explicit `ct.StateType(name=...)` that matches ONNX input names.
-
----
-
-### 4. Conditional Decoder
+### 4. Conditional Decoder — BLOCKED ❌
 
 **ONNX source:** `conditional_decoder_q4f16.onnx`
-**Size:** ~210 MB (quantized)
 
-**I/O Contract:**
-- Inputs:
-  - `speech_tokens: [batch_size, num_speech_tokens]` — int64, dynamic
-  - `speaker_embeddings: [batch_size, 192]` — float16
-  - `speaker_features: [batch_size, feature_dim, 80]` — float16
-- Output: `waveform: [batch_size, num_samples]` — float32
+**Blockers:**
+1. coremltools has no ONNX converter
+2. PyTorch S3Gen flow blocked by Python `timedelta` usage (from `tqdm`)
 
-**Conversion approach:** Stateless, `RangeDim` for speech token length
-- NOT autoregressive — called once with all speech tokens to produce full waveform
-- Use `ct.RangeDim(lower_bound=1, upper_bound=8192)` for `num_speech_tokens`
-- `minimum_deployment_target=iOS18`, `compute_units=CPU_AND_GPU`
+**Status:** Not convertible with current tools.
 
 ---
 
