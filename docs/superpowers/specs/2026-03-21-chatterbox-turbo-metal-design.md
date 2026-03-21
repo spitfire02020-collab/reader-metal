@@ -79,7 +79,8 @@ protocol LanguageModelBackend: Sendable {
     /// - inputsEmbds: [1, 1, hidden=1024] float16 — single token embedding
     /// - kvWriteOffset: ring-buffer write position for new KV entries
     /// - kvReadLength: how many positions to attend over (grows per step)
-    /// Returns logits: [1, 1, vocab=6563] float16
+    /// Returns logits as MTLBuffer: shape [1, 1, vocab=6563], dtype float16.
+    /// The caller reads logits from the buffer by sampling index argmax.
     func forward(
         inputsEmbds: MTLBuffer,
         kvWriteOffset: Int,
@@ -204,7 +205,8 @@ kernel void causal_mask_kernel(
 }
 ```
 
-Dispatch: `grid = [seqLen × seqLen / 1024]`, threadgroups of 1024.
+Dispatch: `threadgroups = ceil(seqLen × seqLen / 1024)`, `threads_per_threadgroup = 1024`.
+For seqLen=1500: `ceil(2,250,000 / 1024) = 2199` threadgroups. The final threadgroup may have inactive threads (`gid >= seqLen × seqLen`) — the kernel guards out-of-bounds writes with `if (gid >= seqLen * seqLen) return;`.
 
 ### Attention Softmax
 
@@ -334,6 +336,7 @@ numpy
 | Metal device not available | Fall back to ONNX Runtime |
 | Kernel compilation fails | Fall back to ONNX Runtime + log error |
 | MTLBuffer allocation fails (OOM) | Fall back to ONNX Runtime |
+| Kernel hangs (infinite loop / uninitialized pointer) | 10-second watchdog timer on `commandBuffer`; if not completed → kill buffer, fall back to ONNX Runtime + log error |
 | Numerical mismatch vs ONNX | Log warning; continue with Metal output |
 | Export script fails | Print clear error + patch instructions |
 
