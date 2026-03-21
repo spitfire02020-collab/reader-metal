@@ -16,7 +16,9 @@ targets:
     type: application
     platform: iOS
     sources:
-      - Reader
+      - path: Reader
+        excludes:
+          - "**/*.onnx_data"
     settings:
       base:
         INFOPLIST_FILE: Reader/Info.plist

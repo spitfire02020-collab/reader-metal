@@ -53,10 +53,10 @@ protocol ModelDownloadProtocol: AnyObject {
 
 protocol DatabaseProtocol: AnyObject {
     func createItem(id: String, title: String, text: String, voiceId: String, settings: [String: Any]) throws
-    func getItem(id: String) -> SynthesisItem?
+    func getItem(id: String) throws -> SynthesisItemRow?
     func updateItemStatus(id: String, status: SynthesisItemStatus) throws
     func addCompletedChunk(itemId: String, chunkIndex: Int, filePath: String) throws
-    func getCompletedChunks(itemId: String) -> [SynthesisChunk]
+    func getCompletedChunks(itemId: String) throws -> [ChunkRow]
     func deleteItem(id: String) throws
 }
 

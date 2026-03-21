@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - Service Container
 // Simple dependency injection container for services
