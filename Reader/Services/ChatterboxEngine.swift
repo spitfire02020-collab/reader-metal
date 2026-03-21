@@ -188,7 +188,6 @@ final class ChatterboxEngine: ObservableObject {
 
         // Initialize Metal LM if enabled
         if useMetalLM {
-            let downloadService = ModelDownloadService.shared
             let weightDir = downloadService.modelDirectory.appendingPathComponent("metal_weights")
             metalLM = try? ChatterboxMetalLM(weightDirectory: weightDir)
             if metalLM != nil {
