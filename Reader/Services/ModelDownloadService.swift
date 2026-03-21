@@ -264,7 +264,8 @@ final class ModelDownloadService: NSObject, ObservableObject {
 
             for (i, component) in components.enumerated() {
                 let modelExists = FileManager.default.fileExists(atPath: modelPaths[i].path)
-                let dataExists  = FileManager.default.fileExists(atPath: dataPaths[i].path)
+                let isMerged = modelPaths[i].lastPathComponent.contains("_merged")
+                let dataExists = isMerged ? true : FileManager.default.fileExists(atPath: dataPaths[i].path)
                 NSLog("[ModelDownload] checkModelAvailability: \(component.rawValue) model=\(modelPaths[i].lastPathComponent) exists=\(modelExists), data=\(dataPaths[i].lastPathComponent) exists=\(dataExists)")
                 if !modelExists { missingFiles.append(modelPaths[i].lastPathComponent) }
                 if !dataExists  { missingFiles.append(dataPaths[i].lastPathComponent) }
@@ -274,8 +275,9 @@ final class ModelDownloadService: NSObject, ObservableObject {
             NSLog("[ModelDownload] checkModelAvailability: tokenizer exists=\(tokenizerExists)")
 
             let allPresent = zip(modelPaths, dataPaths).allSatisfy { model, data in
-                FileManager.default.fileExists(atPath: model.path) &&
-                FileManager.default.fileExists(atPath: data.path)
+                let isMerged = model.lastPathComponent.contains("_merged")
+                return FileManager.default.fileExists(atPath: model.path) &&
+                       (isMerged || FileManager.default.fileExists(atPath: data.path))
             }
 
             return allPresent && tokenizerExists
