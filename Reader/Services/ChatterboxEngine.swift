@@ -179,7 +179,7 @@ final class ChatterboxEngine: ObservableObject {
         conditionalDecoderSession = try ORTSession(
             env: env,
             modelPath: modelPathFn(.conditionalDecoder).path,
-            sessionOptions: coreMLOptions
+            sessionOptions: cpuOptions
         )
 
         isLoaded = true
