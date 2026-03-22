@@ -681,16 +681,20 @@ public final class MetalLMBackend: LanguageModelBackend {
     }
 
     private func precomputeRoPE() throws {
+        NSLog("[MetalLMBackend] precomputeRoPE: START")
         guard let cmd = commandQueue.makeCommandBuffer(),
               let enc = cmd.makeComputeCommandEncoder() else {
             throw MetalLMError.commandBufferFailed
         }
+        NSLog("[MetalLMBackend] precomputeRoPE: commandBuffer+encoder created OK")
         defer { enc.endEncoding() }
 
         guard let ropeLutFunc = library.makeFunction(name: "compute_rope_lut") else {
             throw MetalLMError.kernelNotFound("compute_rope_lut")
         }
+        NSLog("[MetalLMBackend] precomputeRoPE: function found, compiling pipeline...")
         let ropeLutPipeline = try device.makeComputePipelineState(function: ropeLutFunc)
+        NSLog("[MetalLMBackend] precomputeRoPE: pipeline compiled OK")
 
         enc.setComputePipelineState(ropeLutPipeline)
         enc.setBuffer(ropeCosBuffer, offset: 0, index: 0)
@@ -708,16 +712,20 @@ public final class MetalLMBackend: LanguageModelBackend {
             depth: 1
         )
         enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)
+        NSLog("[MetalLMBackend] precomputeRoPE: dispatching...")
 
         cmd.commit()
         cmd.waitUntilCompleted()
+        NSLog("[MetalLMBackend] precomputeRoPE: DONE")
     }
 
     private func precomputeCausalMask() throws {
+        NSLog("[MetalLMBackend] precomputeCausalMask: START")
         guard let cmd = commandQueue.makeCommandBuffer(),
               let enc = cmd.makeComputeCommandEncoder() else {
             throw MetalLMError.commandBufferFailed
         }
+        NSLog("[MetalLMBackend] precomputeCausalMask: commandBuffer+encoder created OK")
         defer { enc.endEncoding() }
 
         guard let maskFunc = library.makeFunction(name: "causal_mask_kernel") else {
@@ -738,9 +746,11 @@ public final class MetalLMBackend: LanguageModelBackend {
             height: 1, depth: 1
         )
         enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)
+        NSLog("[MetalLMBackend] precomputeCausalMask: dispatching...")
 
         cmd.commit()
         cmd.waitUntilCompleted()
+        NSLog("[MetalLMBackend] precomputeCausalMask: DONE")
     }
 
     private func loadWeights() throws {
