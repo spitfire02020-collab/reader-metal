@@ -216,7 +216,7 @@ final class ChatterboxEngine: ObservableObject {
         // MLProgram uses Apple's E5RT/MIL compiler which rejects dynamic shapes for
         // Slice/Pad operators (common in variable-length audio models).
         // NeuralNetwork format uses the older CoreML compiler which is more permissive.
-        let useCoreML = true
+        let useCoreML = false
 
         chatterboxLogger.info("loadModels: loading tokenizer")
         try tokenizer.load(from: downloadService.tokenizerPath)
