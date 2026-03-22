@@ -11,6 +11,7 @@ final class MetalLMEncoder {
     // Pre-allocated intermediate buffers (reused across calls)
     private let ln1Out: MTLBuffer
     private let qBuf: MTLBuffer
+    private let qkvOut: MTLBuffer  // fused QKV result before split
     private let attnOut: MTLBuffer
     private let oOut: MTLBuffer
     private let residual1: MTLBuffer
@@ -44,6 +45,7 @@ final class MetalLMEncoder {
         let fp16 = MemoryLayout<Float16>.size
         ln1Out     = device.makeBuffer(length: maxSeq * hidden * fp16, options: .storageModeShared)!
         qBuf       = device.makeBuffer(length: maxSeq * hidden * fp16, options: .storageModeShared)!
+        qkvOut     = device.makeBuffer(length: maxSeq * hidden * 3 * fp16, options: .storageModeShared)!
         attnOut    = device.makeBuffer(length: maxSeq * hidden * fp16, options: .storageModeShared)!
         oOut       = device.makeBuffer(length: maxSeq * hidden * fp16, options: .storageModeShared)!
         residual1  = device.makeBuffer(length: maxSeq * hidden * fp16, options: .storageModeShared)!
@@ -56,13 +58,17 @@ final class MetalLMEncoder {
     /// Single GPT2 block forward pass.
     /// Input/output layout: [1, seq, hidden] = [1, seq, 1024] row-major Float16.
     ///
-    /// qWeight/kWeight/vWeight are the QKV projection weight matrices (fp16).
+    /// qWeight/kWeight/vWeight are the SPLIT QKV weight buffers [hidden, hidden] each.
     /// kActBuf/vActBuf are the full K/V activation buffers (past + new, [1, totalSeq, hidden]).
     /// These bypass the internal kBuf/vBuf for K/V to avoid re-copying.
+    /// cAttnBias: fused QKV bias [3*hidden=3072] — bias is added after matmul, before split.
     func forward(
         input: MTLBuffer,
         inputLength: Int,
         qWeight: MTLBuffer,
+        kWeight: MTLBuffer,
+        vWeight: MTLBuffer,
+        cAttnBias: MTLBuffer,
         kActBuf: MTLBuffer,
         vActBuf: MTLBuffer,
         totalSeq: Int,
@@ -87,19 +93,37 @@ final class MetalLMEncoder {
             dim: hidden
         )
 
-        // ----- 2. Q projection (matmulTransposeB) -----
-        // Q = ln1_out @ W_q^T → qBuf [1, inputLength, hidden]
+        // ----- 2. Q projection with bias -----
+        // ONNX Gemm: Y = X @ W^T + B (transB=0 for all weights)
+        // Q = ln1_out @ qWeight^T + b_q[1024]
         gemm.matmulTransposeB(
             commandBuffer: commandBuffer,
             A: ln1Out, B: qWeight, C: qBuf,
             batch: 1, S: inputLength, M: hidden, N: hidden
         )
+        // Add Q bias
+        addBias(qBuf, cAttnBias, offset: 0, count: inputLength * hidden)
 
-        // ----- 3. SDPA with causal mask -----
+        // ----- 3. K projection with bias -----
+        gemm.matmulTransposeB(
+            commandBuffer: commandBuffer,
+            A: ln1Out, B: kWeight, C: kActBuf,  // reuse kActBuf for K result
+            batch: 1, S: inputLength, M: hidden, N: hidden
+        )
+        addBias(kActBuf, cAttnBias, offset: hidden, count: inputLength * hidden)
+
+        // ----- 4. V projection with bias -----
+        gemm.matmulTransposeB(
+            commandBuffer: commandBuffer,
+            A: ln1Out, B: vWeight, C: vActBuf,  // reuse vActBuf for V result
+            batch: 1, S: inputLength, M: hidden, N: hidden
+        )
+        addBias(vActBuf, cAttnBias, offset: 2 * hidden, count: inputLength * hidden)
+
+        // ----- 5. SDPA with causal mask -----
         // Q: [1, inputLength, 1024]
-        // K: [1, totalSeq, 1024] (past + new, pre-concatenated)
-        // V: [1, totalSeq, 1024] (past + new, pre-concatenated)
-        // Attention output: [1, inputLength, 1024]
+        // K: [1, totalSeq, 1024] (past + new)
+        // V: [1, totalSeq, 1024] (past + new)
         dpa.forward(
             commandBuffer: commandBuffer,
             Q: qBuf,
@@ -113,18 +137,17 @@ final class MetalLMEncoder {
             output: attnOut
         )
 
-        // ----- 4. O projection -----
-        // attn_out [1, inputLength, 1024] @ W_o^T → o_out [1, inputLength, 1024]
+        // ----- 6. O projection -----
         gemm.matmulTransposeB(
             commandBuffer: commandBuffer,
             A: attnOut, B: oWeight, C: oOut,
             batch: 1, S: inputLength, M: hidden, N: hidden
         )
 
-        // ----- 5. Residual add 1 -----
+        // ----- 7. Residual add 1 -----
         addBuffers(input, oOut, residual1, count: inputLength * hidden)
 
-        // ----- 6. LayerNorm 2 -----
+        // ----- 8. LayerNorm 2 -----
         layerNormPipeline.normalize(
             commandBuffer: commandBuffer,
             input: residual1,
@@ -135,26 +158,29 @@ final class MetalLMEncoder {
             dim: hidden
         )
 
-        // ----- 7. FC1 (intermediate size) -----
-        // ln2_out [1, inputLength, 1024] @ W_fc1^T → fc1Out [1, inputLength, 4096]
-        gemm.matmulTransposeB(
+        // ----- 9. FC1 (intermediate size) -----
+        // ONNX: c_fc.weight is stored [4096, 1024] (out_dim=4096, in_dim=1024)
+        // ONNX Gemm transB=0: Y = X @ W, so W is used AS-IS (no transpose)
+        // matmul: A [S,1024] @ B [1024,4096] = [S,4096] ✓
+        gemm.matmul(
             commandBuffer: commandBuffer,
             A: ln2Out, B: fc1Weight, C: fc1Out,
             batch: 1, S: inputLength, M: hidden, N: intermediate
         )
 
-        // ----- 8. GELU activation -----
+        // ----- 10. GELU activation -----
         applyGELU(commandBuffer: commandBuffer, input: fc1Out, output: geluOut, count: inputLength * intermediate)
 
-        // ----- 9. FC2 -----
-        // gelu_out [1, inputLength, 4096] @ W_fc2^T → fc2_out [1, inputLength, 1024]
-        gemm.matmulTransposeB(
+        // ----- 11. FC2 -----
+        // ONNX: c_proj.weight [4096, 1024], transB=0: Y = [S,4096] @ [4096,1024] = [S,1024]
+        // Plain matmul (NO transpose) — W is already [in=4096, out=1024]
+        gemm.matmul(
             commandBuffer: commandBuffer,
             A: geluOut, B: fc2Weight, C: fc2Out,
             batch: 1, S: inputLength, M: intermediate, N: hidden
         )
 
-        // ----- 10. Residual add 2 -----
+        // ----- 12. Residual add 2 -----
         addBuffers(residual1, fc2Out, output, count: inputLength * hidden)
     }
 
@@ -167,6 +193,17 @@ final class MetalLMEncoder {
         let outPtr = output.contents().bindMemory(to: Float16.self, capacity: count)
         for i in 0..<count {
             outPtr[i] = aPtr[i] + bPtr[i]
+        }
+    }
+
+    /// Add bias vector to buffer in-place (row-major).
+    /// bias[offset..offset+count] is added to each row of buffer (which has width=hidden).
+    /// offset: starting position in bias (0 for Q, hidden for K, 2*hidden for V).
+    private func addBias(_ buffer: MTLBuffer, _ bias: MTLBuffer, offset: Int, count: Int) {
+        let bufPtr = buffer.contents().bindMemory(to: Float16.self, capacity: count)
+        let biasPtr = bias.contents().bindMemory(to: Float16.self, capacity: offset + count)
+        for i in 0..<count {
+            bufPtr[i] = bufPtr[i] + biasPtr[offset + i]
         }
     }
 

@@ -16,8 +16,7 @@ final class WeightLoader {
         let zpBuffer: MTLBuffer
     }
 
-    /// Pre-dequantized fp16 weights — dequantized once, reused forever
-    /// Key: weight name, Value: MTLBuffer containing fp16 [out_dim, flattened]
+    /// Pre-loaded fp16 weights keyed by ONNX name
     private(set) var dequantizedWeights: [String: MTLBuffer] = [:]
 
     init(device: MTLDevice, weightsDir: URL, library: MTLLibrary) throws {
@@ -28,8 +27,11 @@ final class WeightLoader {
         self.commandQueue = q
     }
 
-    /// Load all weights and dequantize to fp16 ONCE.
-    /// This avoids recomputing dequantization every forward step.
+    /// Load all weights.
+    ///
+    /// manifest.json entry types:
+    ///   - fp16: "filename.bin" — raw Float16 binary (metal-export weights)
+    ///   - outDim/blockCount/quant/scales/zp: Q4F16 quantized (e.g. ResembleAI ONNX weights)
     func loadAndDequantAllWeights() throws -> [String: QuantizedWeight] {
         let manifestPath = weightsDir.appendingPathComponent("weights_manifest.json")
         let manifestData = try Data(contentsOf: manifestPath)
@@ -38,46 +40,56 @@ final class WeightLoader {
         var weights: [String: QuantizedWeight] = [:]
 
         for (name, entry) in manifest {
-            guard let q = loadBin(name: entry.quantPath),
-                  let s = loadBin(name: entry.scalesPath),
-                  let z = loadBin(name: entry.zpPath) else {
-                continue
+            if let fp16File = entry.fp16 {
+                // Raw FP16 weight — load directly
+                let fp16Data = try Data(contentsOf: weightsDir.appendingPathComponent(fp16File))
+                let fp16Buf = fp16Data.withUnsafeBytes { ptr in
+                    device.makeBuffer(bytes: ptr.baseAddress!, length: fp16Data.count, options: .storageModeShared)!
+                }
+                dequantizedWeights[name] = fp16Buf
+                let outDim = fp16Data.count / MemoryLayout<Float16>.size
+                weights[name] = QuantizedWeight(
+                    name: name, outDim: outDim, blockCount: 1,
+                    quantBuffer: fp16Buf, scalesBuffer: fp16Buf, zpBuffer: fp16Buf
+                )
+            } else if let quantPath = entry.quant,
+                      let outDim = entry.outDim,
+                      let blockCount = entry.blockCount {
+                // Q4F16 quantized weight
+                guard let qData = loadBin(name: quantPath),
+                      let sData = loadBin(name: entry.scales ?? ""),
+                      let zData = loadBin(name: entry.zp ?? "") else {
+                    continue
+                }
+
+                let qBuf = qData.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: qData.count, options: .storageModeShared)! }
+                let sBuf = sData.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: sData.count, options: .storageModeShared)! }
+                let zBuf = zData.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: zData.count, options: .storageModeShared)! }
+
+                let fp16Size = outDim * blockCount * 16 * MemoryLayout<Float16>.size
+                let fp16Buf = device.makeBuffer(length: fp16Size, options: .storageModeShared)!
+
+                guard let cmd = commandQueue.makeCommandBuffer(),
+                      let enc = cmd.makeComputeCommandEncoder() else { continue }
+                dequantizer.dequant(
+                    commandBuffer: cmd,
+                    quantBuffer: qBuf,
+                    scalesBuffer: sBuf,
+                    zpBuffer: zBuf,
+                    outputBuffer: fp16Buf,
+                    outDim: outDim,
+                    blockCount: blockCount
+                )
+                enc.endEncoding()
+                cmd.commit()
+                cmd.waitUntilCompleted()
+
+                dequantizedWeights[name] = fp16Buf
+                weights[name] = QuantizedWeight(
+                    name: name, outDim: outDim, blockCount: blockCount,
+                    quantBuffer: qBuf, scalesBuffer: sBuf, zpBuffer: zBuf
+                )
             }
-
-            let qBuf = device.makeBuffer(bytes: q, length: q.count, options: .storageModeShared)!
-            let sBuf = device.makeBuffer(bytes: s, length: s.count, options: .storageModeShared)!
-            let zBuf = device.makeBuffer(bytes: z, length: z.count, options: .storageModeShared)!
-
-            // Allocate fp16 output buffer for dequantized weight
-            let fp16Size = entry.outDim * entry.blockCount * 16 * MemoryLayout<Float16>.size
-            let fp16Buf = device.makeBuffer(length: fp16Size, options: .storageModeShared)!
-
-            // Dequantize ONCE during loading
-            guard let cmd = commandQueue.makeCommandBuffer(),
-                  let enc = cmd.makeComputeCommandEncoder() else { continue }
-            dequantizer.dequant(
-                commandBuffer: cmd,
-                quantBuffer: qBuf,
-                scalesBuffer: sBuf,
-                zpBuffer: zBuf,
-                outputBuffer: fp16Buf,
-                outDim: entry.outDim,
-                blockCount: entry.blockCount
-            )
-            enc.endEncoding()
-            cmd.commit()
-            cmd.waitUntilCompleted()
-
-            dequantizedWeights[name] = fp16Buf
-
-            weights[name] = QuantizedWeight(
-                name: name,
-                outDim: entry.outDim,
-                blockCount: entry.blockCount,
-                quantBuffer: qBuf,
-                scalesBuffer: sBuf,
-                zpBuffer: zBuf
-            )
         }
         return weights
     }
@@ -88,9 +100,13 @@ final class WeightLoader {
 }
 
 private struct WeightManifestEntry: Codable {
-    let outDim: Int
-    let blockCount: Int
-    let quantPath: String
-    let scalesPath: String
-    let zpPath: String
+    // Raw Float16 entry
+    let fp16: String?
+
+    // Q4F16 quantized entry
+    let outDim: Int?
+    let blockCount: Int?
+    let quant: String?
+    let scales: String?
+    let zp: String?
 }

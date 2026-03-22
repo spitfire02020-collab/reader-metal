@@ -5,7 +5,6 @@ final class MetalLMForward {
     let device: MTLDevice
     let encoder: MetalLMEncoder
     let weightLoader: WeightLoader
-    let kvCache: KVCacheManager
     let commandQueue: MTLCommandQueue
 
     // Pre-allocated intermediate buffer (reused across layers)
@@ -14,7 +13,8 @@ final class MetalLMForward {
     // For LM head logits computation
     private let logitsBuf: MTLBuffer
 
-    // Weight names per layer (built from GPT2 ONNX manifest)
+    // Per-layer weight ONNX names (GPT2NoEmbed convention)
+    // Each layer has 12 entries: c_attn, c_attn_bias, c_proj, c_proj_bias, ln_1_w, ln_1_b, ln_2_w, ln_2_b, c_fc_w, c_fc_b, c_proj_w, c_proj_b
     private var layerWeightNames: [[String]] = []
 
     init(device: MTLDevice, library: MTLLibrary, weightLoader: WeightLoader) throws {
@@ -27,14 +27,11 @@ final class MetalLMForward {
         }
         self.commandQueue = q
 
-        self.kvCache = KVCacheManager(device: device)
-
         let hidden = MetalLMConfig.hiddenSize
         let maxSeq = MetalLMConfig.maxSequenceLength
         let vocab = MetalLMConfig.vocabSize
-        let fp16 = MemoryLayout<Float16>.size
 
-        hiddenBuf   = device.makeBuffer(length: maxSeq * hidden * fp16, options: .storageModeShared)!
+        hiddenBuf   = device.makeBuffer(length: maxSeq * hidden * MemoryLayout<Float16>.size, options: .storageModeShared)!
         logitsBuf   = device.makeBuffer(length: vocab * MemoryLayout<Float32>.size, options: .storageModeShared)!
 
         loadManifest()
@@ -42,7 +39,6 @@ final class MetalLMForward {
 
     /// Single-step forward pass.
     /// Processes the full input sequence (prefix) at each step.
-    /// For efficiency, implement KV cache append in a follow-up.
     ///
     /// inputs: [1, seq, 1024] fp16 row-major
     /// pastSequenceLength: unused in this simplified implementation
@@ -61,35 +57,38 @@ final class MetalLMForward {
         for layer in 0..<MetalLMConfig.numLayers {
             let names = layerWeightNames[layer]
 
-            // c_attn: [1024, 3072] → split into q, k, v each [1024, 1024]
-            guard let cAttnWeight = weightLoader.dequantizedWeights[names[0]] else {
-                throw MetalLMError.kernelNotFound("c_attn weight for layer \(layer)")
+            // Load weights by ONNX name
+            guard let cAttnWeight = weightLoader.dequantizedWeights[names[0]],
+                  let cAttnBias = weightLoader.dequantizedWeights[names[1]] else {
+                throw MetalLMError.kernelNotFound("c_attn weights for layer \(layer)")
             }
+            let ln1Gamma  = weightLoader.dequantizedWeights[names[4]]!
+            let ln1Beta   = weightLoader.dequantizedWeights[names[5]]!
+            let ln2Gamma  = weightLoader.dequantizedWeights[names[6]]!
+            let ln2Beta   = weightLoader.dequantizedWeights[names[7]]!
+            let cProjWeight = weightLoader.dequantizedWeights[names[10]]!
+            let cFcWeight   = weightLoader.dequantizedWeights[names[8]]!
 
-            // Get remaining weights
-            let ln1Gamma  = weightLoader.dequantizedWeights[names[1]]!
-            let ln1Beta   = weightLoader.dequantizedWeights[names[2]]!
-            let ln2Gamma  = weightLoader.dequantizedWeights[names[3]]!
-            let ln2Beta   = weightLoader.dequantizedWeights[names[4]]!
-            let cProj     = weightLoader.dequantizedWeights[names[5]]!
-            let cFc1      = weightLoader.dequantizedWeights[names[6]]!
-            let cFc2      = weightLoader.dequantizedWeights[names[7]]!
+            // Allocate QKV weight buffers — split from fused c_attn [1024, 3072]
+            let hidden = MetalLMConfig.hiddenSize
+            let hiddenBytes = hidden * MemoryLayout<Float16>.size
+            let qWeightBuf = device.makeBuffer(length: hiddenBytes, options: .storageModeShared)!
+            let kWeightBuf = device.makeBuffer(length: hiddenBytes, options: .storageModeShared)!
+            let vWeightBuf = device.makeBuffer(length: hiddenBytes, options: .storageModeShared)!
 
-            // Reusable buffers for QKV projections
-            let qBuf = device.makeBuffer(length: inputLength * MetalLMConfig.hiddenSize * MemoryLayout<Float16>.size, options: .storageModeShared)!
-            let kBuf = device.makeBuffer(length: inputLength * MetalLMConfig.hiddenSize * MemoryLayout<Float16>.size, options: .storageModeShared)!
-            let vBuf = device.makeBuffer(length: inputLength * MetalLMConfig.hiddenSize * MemoryLayout<Float16>.size, options: .storageModeShared)!
+            // Split fused c_attn [1024, 3072] → Q/K/V each [1024, 1024]
+            splitCAttn(cAttnWeight, q: qWeightBuf, k: kWeightBuf, v: vWeightBuf, hidden: hidden)
 
-            // Split c_attn into Q, K, V weight buffers
-            // Each is [hidden, hidden] = [1024, 1024]
-            splitCAttn(cAttnWeight, q: qBuf, k: kBuf, v: vBuf, hidden: MetalLMConfig.hiddenSize, seq: inputLength)
+            // Allocate K/V activation buffers (used for attention)
+            let kActBuf = device.makeBuffer(length: inputLength * hidden * MemoryLayout<Float16>.size, options: .storageModeShared)!
+            let vActBuf = device.makeBuffer(length: inputLength * hidden * MemoryLayout<Float16>.size, options: .storageModeShared)!
 
             let outputBuf: MTLBuffer
             if layer < MetalLMConfig.numLayers - 1 {
                 outputBuf = hiddenBuf
             } else {
                 outputBuf = device.makeBuffer(
-                    length: inputLength * MetalLMConfig.hiddenSize * MemoryLayout<Float16>.size,
+                    length: inputLength * hidden * MemoryLayout<Float16>.size,
                     options: .storageModeShared
                 )!
             }
@@ -97,13 +96,15 @@ final class MetalLMForward {
             encoder.forward(
                 input: prevOutput,
                 inputLength: inputLength,
-                qWeight: qBuf,
-                kActBuf: kBuf,
-                vActBuf: vBuf,
+                qWeight: qWeightBuf,
+                kWeight: kWeightBuf,
+                vWeight: vWeightBuf,
+                cAttnBias: cAttnBias,
+                kActBuf: kActBuf,
+                vActBuf: vActBuf,
                 totalSeq: inputLength,
-                oWeight: cProj,
-                fc1Weight: cFc1,
-                fc2Weight: cFc2,
+                oWeight: cProjWeight,
+                fc1Weight: cFcWeight,
                 ln1Gamma: ln1Gamma,
                 ln1Beta: ln1Beta,
                 ln2Gamma: ln2Gamma,
@@ -114,16 +115,18 @@ final class MetalLMForward {
 
             if layer < MetalLMConfig.numLayers - 1 {
                 memcpy(prevOutput.contents(), outputBuf.contents(),
-                       inputLength * MetalLMConfig.hiddenSize * MemoryLayout<Float16>.size)
+                       inputLength * hidden * MemoryLayout<Float16>.size)
             } else {
                 memcpy(hiddenBuf.contents(), outputBuf.contents(),
-                       inputLength * MetalLMConfig.hiddenSize * MemoryLayout<Float16>.size)
+                       inputLength * hidden * MemoryLayout<Float16>.size)
             }
         }
 
         // ----- Final LayerNorm -----
-        let lnFGamma = weightLoader.dequantizedWeights["transformer.ln_f.gamma"]!
-        let lnFBeta  = weightLoader.dequantizedWeights["transformer.ln_f.beta"]!
+        guard let lnFGamma = weightLoader.dequantizedWeights["ln_f.weight"],
+              let lnFBeta  = weightLoader.dequantizedWeights["ln_f.bias"] else {
+            throw MetalLMError.kernelNotFound("ln_f weights")
+        }
         let finalLnBuf = device.makeBuffer(
             length: inputLength * MetalLMConfig.hiddenSize * MemoryLayout<Float16>.size,
             options: .storageModeShared
@@ -140,21 +143,22 @@ final class MetalLMForward {
         )
 
         // ----- LM Head -----
-        // lm_head: [vocab=6563, hidden=1024]
-        // final_ln_out: [inputLength, 1024] (row-major)
-        // logits = final_ln_out @ lm_head^T = [inputLength, 1024] @ [1024, 6563] = [inputLength, vocab]
-        let lmHead = weightLoader.dequantizedWeights["lm_head"]!
+        // final_ln_out [inputLength, 1024] @ lm_head [6563, 1024] = [inputLength, 6563]
+        // ONNX weight: [out_dim=6563, in_dim=1024], matmul expects [M,N] @ [N,K] = [M,K]
+        // So: matmul(A [S,1024], B [1024,6563]) → matmul (NOT transposeB)
+        guard let lmHeadWeight = weightLoader.dequantizedWeights["lm_head.weight"] else {
+            throw MetalLMError.kernelNotFound("lm_head.weight")
+        }
 
         let allLogitsBuf = device.makeBuffer(
             length: inputLength * MetalLMConfig.vocabSize * MemoryLayout<Float16>.size,
             options: .storageModeShared
         )!
 
-        // [inputLength, hidden] @ [hidden, vocab] → [inputLength, vocab]
         encoder.gemm.matmul(
             commandBuffer: cmd,
             A: finalLnBuf,
-            B: lmHead,
+            B: lmHeadWeight,
             C: allLogitsBuf,
             batch: 1,
             S: inputLength,
@@ -180,30 +184,27 @@ final class MetalLMForward {
     // MARK: - Helpers
 
     /// Split fused c_attn [hidden, 3*hidden] into q, k, v weight buffers.
-    /// Each is [hidden, hidden] = [1024, 1024].
     /// Column layout of c_attn [1024, 3072]: [q_cols(1024) | k_cols(1024) | v_cols(1024)].
-    private func splitCAttn(_ cAttn: MTLBuffer, q: MTLBuffer, k: MTLBuffer, v: MTLBuffer, hidden: Int, seq: Int) {
+    private func splitCAttn(_ cAttn: MTLBuffer, q: MTLBuffer, k: MTLBuffer, v: MTLBuffer, hidden: Int) {
         let hiddenBytes = hidden * MemoryLayout<Float16>.size
         let cAttnPtr = cAttn.contents().bindMemory(to: Float16.self, capacity: hidden * 3 * hidden)
         let qPtr = q.contents().bindMemory(to: Float16.self, capacity: hidden * hidden)
         let kPtr = k.contents().bindMemory(to: Float16.self, capacity: hidden * hidden)
         let vPtr = v.contents().bindMemory(to: Float16.self, capacity: hidden * hidden)
 
-        // Copy q weight: rows 0..1023, columns 0..1023
+        // Q: rows 0..1023, columns 0..1023
         for row in 0..<hidden {
             let srcOffset = (row * 3 * hidden) * MemoryLayout<Float16>.size
             let dstOffset = row * hidden * MemoryLayout<Float16>.size
             memcpy(qPtr.advanced(by: dstOffset), cAttnPtr.advanced(by: srcOffset), hiddenBytes)
         }
-
-        // Copy k weight: rows 0..1023, columns 1024..2047
+        // K: rows 0..1023, columns 1024..2047
         for row in 0..<hidden {
             let srcOffset = (row * 3 * hidden + hidden) * MemoryLayout<Float16>.size
             let dstOffset = row * hidden * MemoryLayout<Float16>.size
             memcpy(kPtr.advanced(by: dstOffset), cAttnPtr.advanced(by: srcOffset), hiddenBytes)
         }
-
-        // Copy v weight: rows 0..1023, columns 2048..3071
+        // V: rows 0..1023, columns 2048..3071
         for row in 0..<hidden {
             let srcOffset = (row * 3 * hidden + 2 * hidden) * MemoryLayout<Float16>.size
             let dstOffset = row * hidden * MemoryLayout<Float16>.size
@@ -212,24 +213,38 @@ final class MetalLMForward {
     }
 
     private func loadManifest() {
-        // GPT2 ONNX manifest weight names (base names):
-        //   h.N.attn.c_attn     — fused qkv [1024, 3072]
-        //   h.N.attn.ln1.gamma / .beta
-        //   h.N.mlp.ln2.gamma / .beta
-        //   h.N.attn.c_proj    — [1024, 1024]
-        //   h.N.mlp.c_fc1     — [4096, 1024]
-        //   h.N.mlp.c_fc2     — [1024, 4096]
+        // GPT2NoEmbed ONNX weight names (verified from metal-export/language_model_fp16.onnx)
+        //
+        // Per-layer (h.{N}.*):
+        //   attn.c_attn.weight  — fused QKV [1024, 3072]
+        //   attn.c_attn.bias    — QKV bias [3072]
+        //   attn.c_proj.weight  — output projection [1024, 1024]
+        //   attn.c_proj.bias    — output bias [1024]
+        //   ln_1.weight / .bias — attention LayerNorm
+        //   ln_2.weight / .bias — MLP LayerNorm
+        //   mlp.c_fc.weight     — expand: [4096, 1024]
+        //   mlp.c_fc.bias       — expand bias: [4096]
+        //   mlp.c_proj.weight   — contract: [4096, 1024]
+        //   mlp.c_proj.bias     — contract bias: [4096]
+        //
+        // Root-level:
+        //   ln_f.weight / .bias — final LayerNorm
+        //   lm_head.weight / .bias — [6563, 1024]
         for layer in 0..<MetalLMConfig.numLayers {
             let p = "h.\(layer)"
             layerWeightNames.append([
-                "\(p).attn.c_attn",
-                "\(p).attn.ln1.gamma",
-                "\(p).attn.ln1.beta",
-                "\(p).mlp.ln2.gamma",
-                "\(p).mlp.ln2.beta",
-                "\(p).attn.c_proj",
-                "\(p).mlp.c_fc1",
-                "\(p).mlp.c_fc2",
+                "\(p).attn.c_attn.weight",   // [1024, 3072]
+                "\(p).attn.c_attn.bias",     // [3072]
+                "\(p).attn.c_proj.weight",   // [1024, 1024]
+                "\(p).attn.c_proj.bias",     // [1024]
+                "\(p).ln_1.weight",           // [1024]
+                "\(p).ln_1.bias",            // [1024]
+                "\(p).ln_2.weight",          // [1024]
+                "\(p).ln_2.bias",            // [1024]
+                "\(p).mlp.c_fc.weight",     // [4096, 1024]
+                "\(p).mlp.c_fc.bias",       // [4096]
+                "\(p).mlp.c_proj.weight",   // [4096, 1024]
+                "\(p).mlp.c_proj.bias",     // [4096]
             ])
         }
     }
