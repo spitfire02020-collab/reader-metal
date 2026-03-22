@@ -101,11 +101,11 @@ public final class MetalLMBackend: LanguageModelBackend {
             maxSeqLen: self.maxSeqLen,
             device: self.device
         )
-        // Wire up KV cache backing buffers
+        // Wire up KV cache backing buffers (per-layer; scratch space is layer 0's buffers)
+        // Note: kBuffer/vBuffer here are scratch/placeholder.
+        // The actual per-layer K/V cache is accessed via kvCache.buffer(layer, isKey) in each forward call.
         self.kBuffer = kvCache.buffer(for: 0, isKey: true)
-        self.vBuffer = kvCache.buffer(for: 0, isKey: true)  // placeholder until layer 0 is used
-        // Note: kBuffer/vBuffer are per-layer; for simplicity, we use layer 0's buffers
-        // for the scratch space. The actual per-layer buffers are accessed via kvCache.buffer().
+        self.vBuffer = kvCache.buffer(for: 0, isKey: false)
         // This is a simplification — the real implementation uses kvCache.buffer(layer, isKey).
     }
 
@@ -588,10 +588,12 @@ public final class MetalLMBackend: LanguageModelBackend {
     // MARK: - Initialization Helpers
 
     private func compilePipelines() throws {
-        guard let libPath = Bundle(for: MetalLMBackend.self).path(forResource: "default", ofType: "metallib") else {
-            throw LMBackendError.kernelNotFound("Metal library not found in bundle")
+        // Metal files (.metal) added to the Xcode target compile automatically into the default library.
+        // This is the standard iOS Metal pattern — no manual metallib path needed.
+        guard let lib = device.makeDefaultLibrary() else {
+            throw LMBackendError.kernelNotFound("Metal default library not found. Ensure .metal files are added to the target.")
         }
-        self.library = try device.makeLibrary(filepath: libPath)
+        self.library = lib
 
         func makePipeline(_ name: String) throws -> MTLComputePipelineState {
             guard let f = library.makeFunction(name: name) else {
