@@ -77,16 +77,25 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
         NSLog("[ChatterboxMetalLM] init: MetalPipeline created OK")
 
         // Pre-allocate buffers
+        NSLog("[ChatterboxMetalLM] init: allocating concatBuf (\((maxSeq + 1) * hidden * MemoryLayout<Float16>.size) bytes)...")
         let fp16 = MemoryLayout<Float16>.size
         self.concatBuf = device.makeBuffer(
             length: (maxSeq + 1) * hidden * fp16,
             options: .storageModeShared
         )!
+        NSLog("[ChatterboxMetalLM] init: concatBuf OK")
+
+        NSLog("[ChatterboxMetalLM] init: allocating hiddenBuf (\(1 * 1 * hidden * fp16) bytes)...")
         self.hiddenBuf = device.makeBuffer(
             length: 1 * 1 * hidden * fp16,
             options: .storageModeShared
         )!
+        NSLog("[ChatterboxMetalLM] init: hiddenBuf OK")
+
+        NSLog("[ChatterboxMetalLM] init: allocating logitsScratch (\(vocabSize * MemoryLayout<Float>.size) bytes)...")
         self.logitsScratch = UnsafeMutablePointer<Float>.allocate(capacity: vocabSize)
+        NSLog("[ChatterboxMetalLM] init: logitsScratch OK")
+
         NSLog("[ChatterboxMetalLM] init DONE")
     }
 
