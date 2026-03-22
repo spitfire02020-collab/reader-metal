@@ -2,8 +2,8 @@ import Foundation
 
 enum MetalLMConfig {
     static let numLayers = 24
-    static let numQueryHeads = 80  // Q heads for GPT-2 Medium GQA
-    static let numKVHeads = 16      // KV heads (GQA — all layers share same KV)
+    static let numQueryHeads = 16   // Q heads for GPT2NoEmbed standard MHA
+    static let numKVHeads = 16      // KV heads (MHA — same as Q heads)
     static let headDim = 64
     static let hiddenSize = 1024
     static let intermediateSize = 4096

@@ -461,11 +461,8 @@ public final class MetalLMBackend: LanguageModelBackend {
     }
 
     /// Attention decode step (single position Q with per-layer KV cache).
-    /// attention_decode_step kernel: Grid: (80, 64), Threadgroup: (16, 4)
-    /// NOTE: MetalLMBackend attention kernel is designed for GQA (80 Q + 16 KV, ratio=5).
-    /// GPT2NoEmbed uses standard MHA (16 Q + 16 KV, ratio=1). The kernel's
-    /// Q_KV_RATIO=5 mapping (q_head / 5) is incorrect for standard MHA.
-    /// Weight loading is correct; attention kernel needs separate MHA adaptation.
+    /// attention_decode_step kernel: Grid: (16, 64), Threadgroup: (16, 4)
+    /// GPT2NoEmbed standard MHA: 16 Q heads, 16 KV heads, ratio=1.
     private func runAttention(
         q: MTLBuffer,
         layer: Int,
@@ -481,20 +478,20 @@ public final class MetalLMBackend: LanguageModelBackend {
         let vBuf = kvCache.buffer(for: layer, isKey: false)
 
         enc.setComputePipelineState(attentionPipeline)
-        enc.setBuffer(q, offset: 0, index: 0)          // Q [80, 64]
+        enc.setBuffer(q, offset: 0, index: 0)          // Q [16, 64]
         enc.setBuffer(kBuf, offset: 0, index: 1)      // K [16, maxSeq, 64]
         enc.setBuffer(vBuf, offset: 0, index: 2)     // V [16, maxSeq, 64]
-        enc.setBuffer(attnOutBuffer, offset: 0, index: 3)  // output [80, 64]
+        enc.setBuffer(attnOutBuffer, offset: 0, index: 3)  // output [16, 64]
 
         var kvLen = UInt32(kvReadLength)
         var maxSeq = UInt32(maxSeqLen)
         enc.setBytes(&kvLen, length: MemoryLayout<UInt32>.size, index: 4)
         enc.setBytes(&maxSeq, length: MemoryLayout<UInt32>.size, index: 5)
 
-        // Grid: MTLSize(width: 80, height: 64, depth: 1)
+        // Grid: MTLSize(width: 16, height: 64, depth: 1)
         // Threadgroup: MTLSize(width: 16, height: 4, depth: 1)
         let threadsPerGroup = MTLSize(width: 16, height: 4, depth: 1)
-        let numThreadGroups = MTLSize(width: 80, height: 64, depth: 1)
+        let numThreadGroups = MTLSize(width: 16, height: 64, depth: 1)
         enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)
     }
 
@@ -528,7 +525,7 @@ public final class MetalLMBackend: LanguageModelBackend {
     // MARK: - RoPE
 
     /// Apply RoPE to Q and K for a specific layer and sequence position.
-    /// Q: [80, 64] half (modified in-place after kernel writes back)
+    /// Q: [16, 64] half (modified in-place after kernel writes back)
     /// K: [16, 64] half write buffer (written to kBuffer after RoPE)
     /// seqPos: the sequence position for LUT lookup
     private func applyRoPELayer(
@@ -560,7 +557,7 @@ public final class MetalLMBackend: LanguageModelBackend {
         enc.setBytes(&numKV, length: MemoryLayout<UInt32>.size, index: 7)
         enc.setBytes(&hd, length: MemoryLayout<UInt32>.size, index: 8)
 
-        // Grid: (num_heads_total, head_dim/2) = (96, 32)
+        // Grid: (num_heads_total, head_dim/2) = (32, 32)
         let threadsPerGroup = MTLSize(width: 16, height: 4, depth: 1)
         let numThreadGroups = MTLSize(
             width: (numQHeads + numKVHeads + 15) / 16,
