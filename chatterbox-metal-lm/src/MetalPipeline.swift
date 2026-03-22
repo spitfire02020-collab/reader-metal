@@ -111,18 +111,20 @@ public final class MetalPipeline: Sendable {
 
         // Prefill step: forward full prefix to populate KV cache at position 0
         // kvWriteOffset = 0 (first position), kvReadLength = 0 (no past to attend to)
-        let prefillLogits = try backend.forward(
+        var logitsBuf = try backend.forward(
             inputsEmbds: inputsEmbds,
             kvWriteOffset: 0,
             kvReadLength: 0,
             commandBuffer: cmd
         )
-
-        // Extract logits for last position
-        extractLogits(from: prefillLogits, to: &logitsScratch)
+        cmd.commit()
+        cmd.waitUntilCompleted()
 
         // Decode loop
         for step in 0..<maxNewTokens {
+            // Extract logits for the last position (from previous forward pass)
+            extractLogits(from: logitsBuf, to: &logitsScratch)
+
             // Apply repetition penalty based on generated tokens so far
             applyRepetitionPenalty(&logitsScratch, tokens: generatedTokens)
 
@@ -139,15 +141,22 @@ public final class MetalPipeline: Sendable {
                 generatedTokens.append(nextToken)
             }
 
-            // Advance: prepare next step's input embedding
-            // For the next iteration, we need to run forward with the extended sequence.
-            // The caller (ChatterboxEngine) is responsible for providing the extended
-            // inputsEmbds. Here we just track the sequence length.
+            // Advance: the caller (ChatterboxEngine) extends inputsEmbds by
+            // appending the embedding for nextToken. We track the new length.
+            // kvWriteOffset = currentSeqLen (where to write this step's K/V)
+            // kvReadLength = currentSeqLen + 1 (all positions including new one)
             currentSeqLen += 1
+
+            logitsBuf = try backend.forward(
+                inputsEmbds: inputsEmbds,
+                kvWriteOffset: currentSeqLen - 1,
+                kvReadLength: currentSeqLen,
+                commandBuffer: cmd
+            )
         }
 
+        // Final commit — last forward() was already submitted above
         cmd.commit()
-        // Note: no waitUntilCompleted — caller waits on returned buffer instead
 
         return generatedTokens
     }
