@@ -2,9 +2,61 @@ import Foundation
 @preconcurrency import AVFoundation
 import AudioToolbox
 import Accelerate
+import Metal
 import OnnxRuntimeBindings
 import OnnxRuntimeExtensions
 import os.log
+
+// MARK: - LanguageModelBackend Protocol
+
+/// Unified protocol for language model inference backends.
+/// Allows swapping between ONNX Runtime and Metal GPU implementations.
+public protocol LanguageModelBackend: Sendable {
+    /// Initialize the backend with model configuration.
+    func initialize(
+        numLayers: Int,
+        numKVHeads: Int,
+        headDim: Int,
+        maxSeqLen: Int,
+        device: MTLDevice
+    ) async throws
+
+    /// Run one forward pass.
+    /// - Parameters:
+    ///   - inputsEmbds: Input embeddings [1, seqLen, hiddenDim] half
+    ///   - kvWriteOffset: Position in KV cache to write this step's keys/values
+    ///   - kvReadLength: Total positions to attend over (kvWriteOffset + 1)
+    ///   - commandBuffer: Metal command buffer to encode into
+    /// - Returns: Logits buffer [vocabSize] float32 at the last position
+    func forward(
+        inputsEmbds: MTLBuffer,
+        kvWriteOffset: Int,
+        kvReadLength: Int,
+        commandBuffer: MTLCommandBuffer
+    ) throws -> MTLBuffer
+
+    /// Reset all KV cache state.
+    func reset() async
+}
+
+/// Errors for language model backend operations.
+public enum LMBackendError: Error, LocalizedError, Sendable {
+    case notInitialized
+    case metalDeviceUnavailable
+    case kernelNotFound(String)
+    case commandBufferFailed
+    case invalidInputShape
+
+    public var errorDescription: String? {
+        switch self {
+        case .notInitialized:        return "Backend not initialized"
+        case .metalDeviceUnavailable: return "Metal device unavailable"
+        case .kernelNotFound(let n): return "Metal kernel not found: \(n)"
+        case .commandBufferFailed:   return "Metal command buffer failed"
+        case .invalidInputShape:     return "Invalid input shape"
+        }
+    }
+}
 
 // MARK: - Logger
 private let chatterboxLogger = Logger(subsystem: "com.reader.app", category: "ChatterboxEngine")
@@ -102,6 +154,21 @@ final class ChatterboxEngine: ObservableObject {
     private var conditionalDecoderSession: ORTSession?
     // private var conditionalDecoderSession: ORTSession? // Removed: created dynamically per chunk
 
+    // === Metal LM Backend (experimental) ===
+    /// Feature flag: use Metal GPU for language model instead of ONNX Runtime.
+    /// When false (default), uses the existing ONNX decode path.
+    /// When true, uses MetalLMBackend + MetalPipeline for GPU-accelerated inference.
+    /// Requires Task 10 (Xcode build config) to be completed for Metal types to be available.
+    private let useMetalLM: Bool = false
+
+    /// Metal pipeline for GPU-accelerated LM inference.
+    /// Set during model loading when useMetalLM = true.
+    /// TODO(Task 10): Initialize with MetalLMBackend after Xcode build config is set up.
+    private var metalPipeline: (any LanguageModelBackend)?
+
+    /// Metal device for GPU inference. Cached for reuse across pipeline calls.
+    private var metalDevice: MTLDevice?
+
     // Holds all relevant speech encoder outputs.
     // audio_features is used as a prefix in inputs_embeds for the language model
     // to condition voice style. speaker_embeddings + speaker_features go to the
@@ -184,6 +251,37 @@ final class ChatterboxEngine: ObservableObject {
 
         isLoaded = true
         chatterboxLogger.info("loadModels: all models loaded")
+
+        // ── Initialize Metal LM backend (experimental) ───────────────────────────
+        // Metal LM is initialized after ONNX models so that if Metal initialization
+        // fails, the ONNX path still works (useMetalLM=false remains the default).
+        // TODO(Task 10): Uncomment and wire up once Xcode build config adds
+        // chatterbox-metal-lm as a dependency with MetalLMBackend and MetalPipeline types.
+        //
+        // if useMetalLM {
+        //     guard let device = MTLCreateSystemDefaultDevice() else {
+        //         chatterboxLogger.warning("Metal GPU not available, falling back to ONNX")
+        //     } else {
+        //         self.metalDevice = device
+        //         let weightsDir = downloadService.modelDirectory
+        //             .appendingPathComponent("metal_weights")
+        //         let pipeline = try MetalPipeline(
+        //             device: device,
+        //             weightsDir: weightsDir,
+        //             maxNewTokens: config.maxNewTokens,
+        //             repetitionPenalty: config.repetitionPenalty
+        //         )
+        //         try await pipeline.initialize(
+        //             numLayers: 24,
+        //             numKVHeads: config.numKVHeads,
+        //             headDim: config.headDim,
+        //             maxSeqLen: config.maxNewTokens,
+        //             device: device
+        //         )
+        //         self.metalPipeline = pipeline
+        //         chatterboxLogger.info("Metal LM pipeline initialized")
+        //     }
+        // }
     }
 
     private func createSessionOptions(useCoreML: Bool = true) throws -> ORTSessionOptions {
