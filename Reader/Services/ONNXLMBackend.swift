@@ -333,6 +333,33 @@ final class ONNXLMBackend: LanguageModelBackend {
         return try ORTValue(tensorData: emptyData, elementType: .float16, shape: nsShape)
     }
 
+    // MARK: - ORTValue → MTLBuffer Conversion
+
+    /// Convert an ORTValue tensor to MTLBuffer (float16 → float16 copy).
+    ///
+    /// Used by ChatterboxEngine to feed prefix embeddings and per-token embeddings
+    /// into the ONNXLMBackend forward pass without going through ORTSession.
+    ///
+    /// - Parameters:
+    ///   - ortValue: Source ORTValue tensor with shape [1, seqLen, hiddenDim]
+    ///   - device: MTLDevice for buffer allocation
+    /// - Returns: MTLBuffer containing the float16 tensor data, or nil on error
+    public func ortValueToMTLBuffer(ortValue: ORTValue, device: MTLDevice) throws -> MTLBuffer? {
+        let info = try ortValue.tensorTypeAndShapeInfo()
+        let byteCount = info.shape.reduce(1) { $0 * $1.intValue } * MemoryLayout<UInt16>.size
+
+        guard let buffer = device.makeBuffer(length: byteCount, options: .storageModeShared) else {
+            return nil
+        }
+
+        let rawData = try ortValue.tensorData() as Data
+        rawData.withUnsafeBytes { ptr in
+            memcpy(buffer.contents(), ptr.baseAddress!, byteCount)
+        }
+
+        return buffer
+    }
+
     // MARK: - Float16 Conversion
 
     /// Convert IEEE-754 float16 to float32.

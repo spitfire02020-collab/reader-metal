@@ -77,22 +77,18 @@ public final class MetalLMBackend: LanguageModelBackend {
 
     // MARK: - Initialization
 
-    public init(device: MTLDevice, weightsDir: URL) {
+    public init(device: MTLDevice, weightsDir: URL) throws {
         self.device = device
         self.weightsDir = weightsDir
         guard let q = device.makeCommandQueue() else {
-            fatalError("MetalLMBackend: could not create command queue")
+            throw MetalLMError.commandQueueFailed
         }
         self.commandQueue = q
         self.ropeDimHalf = headDim / 2
 
         // Load weights from manifest immediately after device/queue setup
         // This ensures weightBuffers are populated before any forward pass
-        do {
-            try loadWeights()
-        } catch {
-            fatalError("MetalLMBackend: failed to load weights: \(error)")
-        }
+        try loadWeights()
     }
 
     // MARK: - LanguageModelBackend
@@ -339,7 +335,7 @@ public final class MetalLMBackend: LanguageModelBackend {
         commandBuffer: MTLCommandBuffer
     ) throws {
         guard let enc = commandBuffer.makeComputeCommandEncoder() else {
-            throw LMBackendError.commandBufferFailed
+            throw MetalLMError.commandBufferFailed
         }
         defer { enc.endEncoding() }
 
@@ -375,7 +371,7 @@ public final class MetalLMBackend: LanguageModelBackend {
         commandBuffer: MTLCommandBuffer
     ) throws {
         guard let enc = commandBuffer.makeComputeCommandEncoder() else {
-            throw LMBackendError.commandBufferFailed
+            throw MetalLMError.commandBufferFailed
         }
         defer { enc.endEncoding() }
 
@@ -410,7 +406,7 @@ public final class MetalLMBackend: LanguageModelBackend {
         commandBuffer: MTLCommandBuffer
     ) throws {
         guard let enc = commandBuffer.makeComputeCommandEncoder() else {
-            throw LMBackendError.commandBufferFailed
+            throw MetalLMError.commandBufferFailed
         }
         defer { enc.endEncoding() }
 
@@ -439,7 +435,7 @@ public final class MetalLMBackend: LanguageModelBackend {
         commandBuffer: MTLCommandBuffer
     ) throws {
         guard let enc = commandBuffer.makeComputeCommandEncoder() else {
-            throw LMBackendError.commandBufferFailed
+            throw MetalLMError.commandBufferFailed
         }
         defer { enc.endEncoding() }
 
@@ -468,7 +464,7 @@ public final class MetalLMBackend: LanguageModelBackend {
         commandBuffer: MTLCommandBuffer
     ) throws {
         guard let enc = commandBuffer.makeComputeCommandEncoder() else {
-            throw LMBackendError.commandBufferFailed
+            throw MetalLMError.commandBufferFailed
         }
         defer { enc.endEncoding() }
 
@@ -503,7 +499,7 @@ public final class MetalLMBackend: LanguageModelBackend {
         commandBuffer: MTLCommandBuffer
     ) throws {
         guard let enc = commandBuffer.makeComputeCommandEncoder() else {
-            throw LMBackendError.commandBufferFailed
+            throw MetalLMError.commandBufferFailed
         }
         defer { enc.endEncoding() }
 
@@ -534,7 +530,7 @@ public final class MetalLMBackend: LanguageModelBackend {
         commandBuffer: MTLCommandBuffer
     ) throws {
         guard let enc = commandBuffer.makeComputeCommandEncoder() else {
-            throw LMBackendError.commandBufferFailed
+            throw MetalLMError.commandBufferFailed
         }
         defer { enc.endEncoding() }
 
@@ -613,16 +609,22 @@ public final class MetalLMBackend: LanguageModelBackend {
     // MARK: - Initialization Helpers
 
     private func compilePipelines() throws {
-        // Metal files (.metal) added to the Xcode target compile automatically into the default library.
-        // This is the standard iOS Metal pattern — no manual metallib path needed.
-        guard let lib = device.makeDefaultLibrary() else {
-            throw LMBackendError.kernelNotFound("Metal default library not found. Ensure .metal files are added to the target.")
+        // Try to load the default library (from compiled .metal sources)
+        // Falls back to loading default.metallib from the bundle as a resource file.
+        var lib: MTLLibrary?
+        if let defaultLib = device.makeDefaultLibrary() {
+            lib = defaultLib
+        } else if let metallibURL = Bundle.main.url(forResource: "default", withExtension: "metallib") {
+            lib = try? device.makeLibrary(URL: metallibURL)
         }
-        self.library = lib
+        guard let library = lib else {
+            throw MetalLMError.kernelNotFound("Metal library not found. Ensure .metal files are compiled or default.metallib is in the bundle.")
+        }
+        self.library = library
 
         func makePipeline(_ name: String) throws -> MTLComputePipelineState {
             guard let f = library.makeFunction(name: name) else {
-                throw LMBackendError.kernelNotFound(name)
+                throw MetalLMError.kernelNotFound(name)
             }
             return try device.makeComputePipelineState(function: f)
         }
@@ -672,12 +674,12 @@ public final class MetalLMBackend: LanguageModelBackend {
     private func precomputeRoPE() throws {
         guard let cmd = commandQueue.makeCommandBuffer(),
               let enc = cmd.makeComputeCommandEncoder() else {
-            throw LMBackendError.commandBufferFailed
+            throw MetalLMError.commandBufferFailed
         }
         defer { enc.endEncoding() }
 
         guard let ropeLutFunc = library.makeFunction(name: "compute_rope_lut") else {
-            throw LMBackendError.kernelNotFound("compute_rope_lut")
+            throw MetalLMError.kernelNotFound("compute_rope_lut")
         }
         let ropeLutPipeline = try device.makeComputePipelineState(function: ropeLutFunc)
 
@@ -705,12 +707,12 @@ public final class MetalLMBackend: LanguageModelBackend {
     private func precomputeCausalMask() throws {
         guard let cmd = commandQueue.makeCommandBuffer(),
               let enc = cmd.makeComputeCommandEncoder() else {
-            throw LMBackendError.commandBufferFailed
+            throw MetalLMError.commandBufferFailed
         }
         defer { enc.endEncoding() }
 
         guard let maskFunc = library.makeFunction(name: "causal_mask_kernel") else {
-            throw LMBackendError.kernelNotFound("causal_mask_kernel")
+            throw MetalLMError.kernelNotFound("causal_mask_kernel")
         }
         let maskPipeline = try device.makeComputePipelineState(function: maskFunc)
 
@@ -755,9 +757,9 @@ public final class MetalLMBackend: LanguageModelBackend {
 
     // MARK: - Weight Access
 
-    private func weight(_ name: String) -> MTLBuffer {
+    private func weight(_ name: String) throws -> MTLBuffer {
         guard let buf = weightBuffers[name] else {
-            fatalError("MetalLMBackend: weight not loaded: \(name)")
+            throw MetalLMError.weightNotLoaded(name)
         }
         return buf
     }

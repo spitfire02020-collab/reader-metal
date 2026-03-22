@@ -295,6 +295,7 @@ public enum MetalLMError: Error, LocalizedError {
     case commandBufferFailed
     case commandQueueFailed
     case metalDeviceUnavailable
+    case weightNotLoaded(String)
 
     public var errorDescription: String? {
         switch self {
@@ -310,6 +311,8 @@ public enum MetalLMError: Error, LocalizedError {
             return "Metal command queue creation failed"
         case .metalDeviceUnavailable:
             return "Metal device unavailable"
+        case .weightNotLoaded(let name):
+            return "Metal weight not loaded: \(name)"
         }
     }
 }

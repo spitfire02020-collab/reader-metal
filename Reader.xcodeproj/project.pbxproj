@@ -55,12 +55,12 @@
 		DBF8C6E775DCFE42863191BE /* HapticFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2D7560B0FD1CA49A4FFDAD0 /* HapticFeedback.swift */; };
 		DDEBC41B6AF0C4F3226D4C51 /* BookParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFCD7FE661A4214FA2CFB3FE /* BookParser.swift */; };
 		E1B64984EF342473BAEA9C17 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92A3FC5F094E7E271ED14097 /* SettingsView.swift */; };
-		E5A5DF19CEA501D564B0A6D2 /* default.metallib in Sources */ = {isa = PBXBuildFile; fileRef = 462A943EEF2F97CC3C9E6A49 /* default.metallib */; };
 		E82E1FAEA3609F64C98EF0A5 /* ServiceContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CF5A1D5C6BB64503D7E4EBF /* ServiceContainer.swift */; };
 		E93D736C29808207D47DCE64 /* default_voice.wav in Resources */ = {isa = PBXBuildFile; fileRef = 4A6D8EC036C82852FD4ED0CF /* default_voice.wav */; };
 		ECA5E0E3D07978F6D54832B3 /* LibraryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B9DEE2C033CD96D4CCEE412 /* LibraryItem.swift */; };
 		FDCFA371D8640E9286DF379D /* MetalPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DE504760DE77989350B2F3 /* MetalPipeline.swift */; };
 		C48DA3F12D3AB6789ABCDEF0 /* ChatterboxMetalLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = F830F874D8FFF92B953DC8D3 /* ChatterboxMetalLM.swift */; };
+		AA0000010000000000000001 /* default.metallib in Resources */ = {isa = PBXBuildFile; fileRef = 462A943EEF2F97CC3C9E6A49 /* default.metallib */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -418,6 +418,7 @@
 				745A589F7CD02CFD3A76D775 /* Emily.wav in Resources */,
 				8AC1726ED465942DCE31C1C0 /* Henry.wav in Resources */,
 				9C12E45A6280921DD6882E4E /* Jade.wav in Resources */,
+				AA0000010000000000000001 /* default.metallib in Resources */,
 				91E3147D122EF81518168B45 /* conditional_decoder_q4f16_merged.onnx in Resources */,
 				E93D736C29808207D47DCE64 /* default_voice.wav in Resources */,
 				515A6F013D20A426D3EDA94F /* embed_tokens_q4f16_merged.onnx in Resources */,
@@ -470,7 +471,6 @@
 				D6605160C0832100C0AF1A8A /* KVCacheManager.swift in Sources */,
 				52940F773E282940FD44E6FD /* Q4F16Dequant.swift in Sources */,
 				C928E9EABDB1BCFFEB47E050 /* ONNXLMBackend.swift in Sources */,
-				E5A5DF19CEA501D564B0A6D2 /* default.metallib in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

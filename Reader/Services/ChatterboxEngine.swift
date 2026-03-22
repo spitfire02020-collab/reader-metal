@@ -265,24 +265,28 @@ final class ChatterboxEngine: ObservableObject {
         // fails, the ONNX path still works (useMetalLM=false remains the default).
         if useMetalLM {
             if let device = MTLCreateSystemDefaultDevice() {
-                self.metalDevice = device
                 let weightsDir = downloadService.modelsDirectory
                     .appendingPathComponent("metal_weights")
-                let pipeline = try ChatterboxMetalLM(
-                    device: device,
-                    weightsDir: weightsDir,
-                    maxNewTokens: config.maxNewTokens,
-                    repetitionPenalty: config.repetitionPenalty
-                )
-                try await pipeline.initialize(
-                    numLayers: 24,
-                    numKVHeads: config.numKVHeads,
-                    headDim: config.headDim,
-                    maxSeqLen: config.maxNewTokens,
-                    device: device
-                )
-                self.metalPipeline = pipeline
-                chatterboxLogger.info("Metal LM pipeline initialized")
+                do {
+                    let pipeline = try ChatterboxMetalLM(
+                        device: device,
+                        weightsDir: weightsDir,
+                        maxNewTokens: config.maxNewTokens,
+                        repetitionPenalty: config.repetitionPenalty
+                    )
+                    try await pipeline.initialize(
+                        numLayers: 24,
+                        numKVHeads: config.numKVHeads,
+                        headDim: config.headDim,
+                        maxSeqLen: config.maxNewTokens,
+                        device: device
+                    )
+                    self.metalDevice = device
+                    self.metalPipeline = pipeline
+                    chatterboxLogger.info("Metal LM pipeline initialized")
+                } catch {
+                    chatterboxLogger.warning("Metal LM init failed (\(error.localizedDescription)) — falling back to ONNX")
+                }
             } else {
                 chatterboxLogger.warning("Metal GPU not available, falling back to ONNX")
             }

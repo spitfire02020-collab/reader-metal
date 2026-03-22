@@ -48,7 +48,7 @@ public final class MetalPipeline: LanguageModelBackend, Sendable {
         self.device = device
         self.maxNewTokens = maxNewTokens
         self.repetitionPenalty = repetitionPenalty
-        self.backend = MetalLMBackend(device: device, weightsDir: weightsDir)
+        self.backend = try MetalLMBackend(device: device, weightsDir: weightsDir)
 
         guard let q = device.makeCommandQueue() else {
             throw MetalPipelineError.commandQueueFailed
