@@ -210,15 +210,45 @@ public final class MetalPipeline: LanguageModelBackend, Sendable {
     }
 
     /// Decode with a single decode step (after prefill).
-    /// Used for streaming/autoregressive generation where the caller manages
-    /// the sequence buffer and KV cache.
+    /// This is a pure forward-only operation — no waiting, no extraction, no argmax.
+    /// The caller (generate() or metalDecodeLoop) manages the full loop:
+    ///   1. Extract logits from the logitsBuf returned by the PREVIOUS decodeStep/prefill
+    ///   2. Apply repetition penalty + greedy argmax → next token
+    ///   3. Embed next token → extend sequence buffer
+    ///   4. Call decodeStep() for the next forward pass
+    ///
+    /// - Parameters:
+    ///   - currentEmbedding: Current input embedding [1, 1, 1024] half at the new position
+    ///   - kvWriteOffset: Position in KV cache to write this step's keys/values
+    ///   - kvReadLength: Total positions to attend over (kvWriteOffset + 1)
+    ///   - commandBuffer: Command buffer to encode this step's forward pass
+    /// - Returns: MTLBuffer containing logits [vocabSize] Float32 from this step's forward pass.
+    ///            Caller must cmd.commit() + cmd.waitUntilCompleted() before extracting logits.
+    public func decodeStep(
+        currentEmbedding: MTLBuffer,
+        kvWriteOffset: Int,
+        kvReadLength: Int,
+        commandBuffer: MTLCommandBuffer
+    ) throws -> MTLBuffer {
+        return try backend.forward(
+            inputsEmbds: currentEmbedding,
+            kvWriteOffset: kvWriteOffset,
+            kvReadLength: kvReadLength,
+            commandBuffer: commandBuffer
+        )
+    }
+
+    /// Decode with a single decode step including waiting and extraction.
+    /// Convenience method for callers that want a self-contained step.
+    /// NOTE: For the correct pipelined decode loop, prefer the synchronous decodeStep()
+    /// above and manage the loop externally.
     ///
     /// - Parameters:
     ///   - currentEmbedding: Current input embedding [1, 1, 1024] half at the new position
     ///   - kvWriteOffset: Position in KV cache to write this step's keys/values
     ///   - kvReadLength: Total positions to attend over (kvWriteOffset + 1)
     /// - Returns: Next token ID (Int32), or STOP_SPEECH if generation is complete
-    public func decodeStep(
+    public func decodeStepWithExtraction(
         currentEmbedding: MTLBuffer,
         kvWriteOffset: Int,
         kvReadLength: Int

@@ -686,15 +686,15 @@ public final class MetalLMBackend: LanguageModelBackend {
               let enc = cmd.makeComputeCommandEncoder() else {
             throw MetalLMError.commandBufferFailed
         }
-        NSLog("[MetalLMBackend] precomputeRoPE: commandBuffer+encoder created OK")
         defer { enc.endEncoding() }
+        NSLog("[MetalLMBackend] precomputeRoPE: commandBuffer+encoder created OK, encoding...")
 
         guard let ropeLutFunc = library.makeFunction(name: "compute_rope_lut") else {
             throw MetalLMError.kernelNotFound("compute_rope_lut")
         }
-        NSLog("[MetalLMBackend] precomputeRoPE: function found, compiling pipeline...")
+        NSLog("[MetalLMBackend] precomputeRoPE: JIT compiling compute_rope_lut pipeline...")
         let ropeLutPipeline = try device.makeComputePipelineState(function: ropeLutFunc)
-        NSLog("[MetalLMBackend] precomputeRoPE: pipeline compiled OK")
+        NSLog("[MetalLMBackend] precomputeRoPE: pipeline compiled OK, encoding kernel...")
 
         enc.setComputePipelineState(ropeLutPipeline)
         enc.setBuffer(ropeCosBuffer, offset: 0, index: 0)

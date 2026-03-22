@@ -1042,20 +1042,25 @@ final class ChatterboxEngine: ObservableObject {
         // This path avoids ORT's GatherBlockQuantized expansion for the LM decode step.
         //
         // When metalPipeline is nil, falls back to the original ORT-only path.
-        let useMetalBackend = self.metalPipeline != nil
+        var useMetalBackend = self.metalPipeline != nil
 
         // speechTokens is used after the if-else, so declare it in the outer scope
         var speechTokens: [Int] = []
 
         if useMetalBackend {
-            let afInfo = try scaledAudioFeatures.tensorTypeAndShapeInfo()
-            let audioSeqLen = afInfo.shape[1].intValue
-            chatterboxLogger.debug("decode loop start (Metal GPU path), totalSeqLen=\(totalSeqLen), maxTokens=\(self.config.maxNewTokens)")
+            chatterboxLogger.debug("decode loop start (Metal path), totalSeqLen=\(totalSeqLen), maxTokens=\(self.config.maxNewTokens)")
+
+            // Compute audio sequence length (total includes both audio + text)
+            let audioSeqLen = totalSeqLen - textSeqLen
+
+            // Call the Metal decode loop with ONNX embed_tokens for token embedding.
+            // The metalDecodeLoop uses ChatterboxMetalLM.generate() which calls the
+            // embedToken callback via ONNX for each generated token.
             speechTokens = try await metalDecodeLoop(
                 prefixEmbeds: prefixEmbeds,
                 totalSeqLen: totalSeqLen,
                 audioSeqLen: audioSeqLen,
-                textSeqLen: textSeqLenFromEmbed,
+                textSeqLen: textSeqLen,
                 embedSession: embedSession,
                 embedInputName: embedInputName,
                 embedOutputName: embedOutputName,
@@ -1857,28 +1862,36 @@ final class ChatterboxEngine: ObservableObject {
             textEmbed[i] = prefixFloats[audioSeqLen * hiddenSize + i]
         }
 
-        // Embed START_SPEECH token to get the speech embedding
-        let startSpeechToken = Int64(config.startSpeechToken)
-        let startSpeechTensor = try createInt64Tensor([startSpeechToken], shape: [1, 1])
-        let embedOutputs = try embedSession.run(
-            withInputs: [embedInputName: startSpeechTensor],
-            outputNames: Set([embedOutputName]),
-            runOptions: nil
-        )
-        guard let speechEmbedValue = embedOutputs[embedOutputName] else {
-            throw ChatterboxError.inferenceError("Embedding session produced no output for START_SPEECH")
-        }
-        let speechEmbed = try extractFloatArray(from: speechEmbedValue)
+        // ONNX embed_tokens callback: embeds a token ID via the ONNX session.
+        // This is used by generate() for each decode step to get the real token embedding.
+        // The first call gets START_SPEECH (6561) to embed the initial tracking token.
+        let embedInputName = embedInputName
+        let embedOutputName = embedOutputName
 
-        // Run full Metal decode loop (prefill + autoregressive generate)
-        let generatedTokens = try pipeline.generate(
+        let embedTokenCallback: (Int32) throws -> [Float] = { [weak self] token in
+            guard let self = self else { throw ChatterboxError.inferenceError("Engine deallocated") }
+            let nextTokenTensor = try self.createInt64Tensor([Int64(token)], shape: [1, 1])
+            let nextEmbedOutputs = try embedSession.run(
+                withInputs: [embedInputName: nextTokenTensor],
+                outputNames: Set([embedOutputName]),
+                runOptions: nil
+            )
+            guard let nextEmbedORT = nextEmbedOutputs[embedOutputName] else {
+                throw ChatterboxError.inferenceError("Embedding session produced no output for token \(token)")
+            }
+            return try self.extractFloatArray(from: nextEmbedORT)
+        }
+
+        // Generate speech tokens with Metal LM forward + ONNX token embedding.
+        // Prefill: [conditioning | text] → KV cache
+        // Decode: ONNX embeds each generated token → Metal forward → logits → argmax
+        let metalTokens = try pipeline.generate(
             conditioning: conditioning,
             textEmbed: textEmbed,
-            speechEmbed: speechEmbed
+            embedToken: embedTokenCallback
         )
 
-        chatterboxLogger.debug("metalDecodeLoop: generated \(generatedTokens.count) tokens")
-        return generatedTokens.map { Int($0) }
+        return metalTokens.map { Int($0) }
     }
 }
 

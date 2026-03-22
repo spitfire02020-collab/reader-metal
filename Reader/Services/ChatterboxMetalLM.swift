@@ -149,32 +149,41 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
         currentSeqLen = 0
     }
 
+    /// Expose repetition penalty for use by external decode loops (e.g. metalDecodeLoop).
+    public var repetitionPenalty: Float {
+        pipeline.repetitionPenalty
+    }
+
     // MARK: - Generate (convenience, not in protocol)
+
+    /// Token embedding callback used during decode steps.
+    /// The caller (metalDecodeLoop) uses ONNX embed_tokens to embed each generated token.
+    public typealias EmbedTokenCallback = (Int32) throws -> [Float]
 
     /// Generate speech tokens autoregressively.
     ///
-    /// Reference-style decode loop (matches Python/ONNX reference):
-    ///   1. Concatenate [conditioning | text | speech_embed] as float16
-    ///   2. Extend with START_SPEECH embeddings for max decode length
-    ///   3. Prefill step: forward full prefix → populate KV cache at pos 0
-    ///   4. Decode loop: greedy argmax + repetition penalty per step
+    /// Architecture matches ONNX reference decode path:
+    ///   1. Prefill: forward on [conditioning | text] → KV cache populated at pos 0
+    ///   2. First decode step: embed START_SPEECH (6561), forward, extract logits
+    ///   3. Subsequent steps: embed each newly generated token, forward, extract logits
+    ///   4. STOP_SPEECH (6562) terminates generation
     ///
     /// - Parameters:
     ///   - conditioning: Speaker conditioning embeddings [cond_len, 1024] Float32
     ///   - textEmbed: Text embeddings [text_len, 1024] Float32
-    ///   - speechEmbed: Initial speech embedding [1, 1024] Float32 (START_SPEECH embed)
+    ///   - embedToken: Callback to embed a token ID → [1, 1024] Float32.
+    ///                  metalDecodeLoop uses ONNX embed_tokens here.
     /// - Returns: Generated speech token IDs excluding START_SPEECH and STOP_SPEECH
     public func generate(
         conditioning: [Float],
         textEmbed: [Float],
-        speechEmbed: [Float]
+        embedToken: @escaping EmbedTokenCallback
     ) throws -> [Int32] {
         generatedTokens = []
         currentSeqLen = 0
 
         let condLen = conditioning.count / hidden
         let textLen = textEmbed.count / hidden
-        let hiddenBytes = hidden * MemoryLayout<Float16>.size
         let fp16 = MemoryLayout<Float16>.size
 
         // Pointer to concatBuf as float16
@@ -197,34 +206,15 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
             }
         }
 
-        // Copy speech_embed [1, hidden] after text
-        speechEmbed.withUnsafeBufferPointer { src in
-            let srcPtr = src.baseAddress!
-            let dstOffset = (condLen + textLen) * hidden
-            for i in 0..<hidden {
-                concatPtr16[dstOffset + i] = Float16(srcPtr[i])
-            }
-        }
-
-        // Prefix length (before any generated tokens)
-        let prefixLen = condLen + textLen + 1  // +1 for speech_embed
-
-        // Extend concatBuf with START_SPEECH embeddings for max decode length.
-        // After prefill + decode: concatBuf has the growing sequence.
-        let speechOffset = (condLen + textLen) * hidden
-        for pos in (condLen + textLen + 1)..<maxSeq {
-            let srcOffset = speechOffset
-            let dstOffset = pos * hidden
-            for i in 0..<hidden {
-                concatPtr16[dstOffset + i] = concatPtr16[srcOffset + i]
-            }
-        }
+        // Prefix length = [conditioning | text], NO speech embed (matches ONNX)
+        let prefixLen = condLen + textLen
 
         guard let cmd = commandQueue.makeCommandBuffer() else {
             throw MetalLMError.commandBufferFailed
         }
 
-        // Prefill step: process full prefix to populate KV cache at position 0
+        // Prefill step: process full [conditioning | text] to populate KV cache at position 0.
+        // kvWriteOffset=0, kvReadLength=0 (no past to attend to).
         currentSeqLen = prefixLen
         _ = try forward(
             inputsEmbds: concatBuf,
@@ -237,8 +227,8 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
 
         // Decode loop
         for _ in 0..<maxNewTokens {
-            // Forward step: reads the full concatBuf up to currentSeqLen,
-            // writes new K/V at currentSeqLen-1, attends over currentSeqLen positions.
+            // Forward step: reads concatBuf up to currentSeqLen, writes K/V at currentSeqLen-1,
+            // attends over currentSeqLen positions.
             let logitsBuf = try forward(
                 inputsEmbds: concatBuf,
                 kvWriteOffset: currentSeqLen - 1,
@@ -287,12 +277,15 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
                 generatedTokens.append(nextToken)
             }
 
-            // Extend concatBuf at new position (for next step's attention).
-            // In a full implementation, this would be the embedding for nextToken.
-            // For now, we reuse the START_SPEECH embedding for all generated tokens.
+            // Embed the newly generated token and extend concatBuf for the next step.
+            // This is the critical fix: use the REAL token embedding, not START_SPEECH.
+            let nextEmbedding = try embedToken(nextToken)
             let newPos = currentSeqLen
-            for i in 0..<hidden {
-                concatPtr16[newPos * hidden + i] = concatPtr16[speechOffset + i]
+            nextEmbedding.withUnsafeBufferPointer { src in
+                let srcPtr = src.baseAddress!
+                for i in 0..<hidden {
+                    concatPtr16[newPos * hidden + i] = Float16(srcPtr[i])
+                }
             }
             currentSeqLen += 1
         }
