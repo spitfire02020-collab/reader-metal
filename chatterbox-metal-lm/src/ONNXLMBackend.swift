@@ -41,9 +41,6 @@ final class ONNXLMBackend: LanguageModelBackend {
     /// Maximum sequence length for pre-allocation.
     private(set) var maxSeqLen: Int = 1500
 
-    /// Repetition penalty (1.2 per generation_config.json).
-    private let repetitionPenalty: Float = 1.2
-
     /// Current KV cache state — carried across forward() calls.
     /// Key: "past_key_values.{layer}.key" / "past_key_values.{layer}.value"
     /// Value: ORTValue tensor [1, numKVHeads, pastLen, headDim] float16
