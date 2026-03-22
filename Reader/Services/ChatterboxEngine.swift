@@ -271,15 +271,18 @@ final class ChatterboxEngine: ObservableObject {
             let weightsDir = downloadService.modelsDirectory
                 .appendingPathComponent("metal_weights")
             let weightsManifest = weightsDir.appendingPathComponent("weights_manifest.json")
-            guard FileManager.default.fileExists(atPath: weightsManifest.path) else {
+            let manifestExists = FileManager.default.fileExists(atPath: weightsManifest.path)
+            chatterboxLogger.info("Metal LM init: useMetalLM=true, manifestExists=\(manifestExists), manifestPath=\(weightsManifest.path)")
+            guard manifestExists else {
                 chatterboxLogger.warning("Metal weights not found — skipping Metal LM")
                 // metalPipeline stays nil → ONNX path used automatically
                 return
             }
             guard let device = MTLCreateSystemDefaultDevice() else {
-                chatterboxLogger.warning("Metal GPU not available — falling back to ONNX")
+                chatterboxLogger.warning("Metal GPU not available (MTLCreateSystemDefaultDevice returned nil) — falling back to ONNX")
                 return
             }
+            chatterboxLogger.info("Metal LM init: device=\(device.name), registryID=\(device.registryID)")
             do {
                 let pipeline = try ChatterboxMetalLM(
                     device: device,
@@ -296,10 +299,12 @@ final class ChatterboxEngine: ObservableObject {
                 )
                 self.metalDevice = device
                 self.metalPipeline = pipeline
-                chatterboxLogger.info("Metal LM pipeline initialized")
+                chatterboxLogger.info("Metal LM pipeline initialized SUCCESS")
             } catch {
                 chatterboxLogger.warning("Metal LM init failed (\(error.localizedDescription)) — falling back to ONNX")
             }
+        } else {
+            chatterboxLogger.info("Metal LM init: useMetalLM=false, skipping Metal init entirely")
         }
     }
 
