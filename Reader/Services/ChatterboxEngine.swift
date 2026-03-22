@@ -160,8 +160,16 @@ final class ChatterboxEngine: ObservableObject {
     /// Feature flag: use Metal GPU for language model instead of ONNX Runtime.
     /// When false (default), uses the existing ONNX decode path.
     /// When true, uses MetalLMBackend + MetalPipeline for GPU-accelerated inference.
-    /// Requires Task 10 (Xcode build config) to be completed for Metal types to be available.
-    private let useMetalLM: Bool = true
+    /// TEMPORARILY DISABLED on real devices: A18 Pro GPU driver has a bug causing
+    /// [MTLDebugCommandBuffer preCommit] assertion during pipeline compilation,
+    /// crashing the ORT CoreML EP and hanging the app. Metal still works on simulator.
+    private let useMetalLM: Bool = {
+        #if targetEnvironment(simulator)
+        return true  // Metal works on simulator (Mac GPU)
+        #else
+        return false  // Disable on real device until A18 Pro GPU driver fix
+        #endif
+    }()
 
     /// Metal pipeline for GPU-accelerated LM inference.
     /// Set during model loading when useMetalLM = true.
