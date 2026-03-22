@@ -1042,7 +1042,12 @@ final class ChatterboxEngine: ObservableObject {
         // This path avoids ORT's GatherBlockQuantized expansion for the LM decode step.
         //
         // When metalPipeline is nil, falls back to the original ORT-only path.
+        // TEMPORARY: Force OFF while attention kernel GQA/MHA mismatch is fixed.
+        // GPT2NoEmbed uses numQueryHeads=16, but the Metal attention kernel expects 80 Q heads
+        // with GQA ratio=5 (mapping 80 Q → 16 KV). The kernel's [80, 64] grid reads garbage
+        // from the [16, 64] Q buffer, producing zero logits everywhere → token 0 every step.
         var useMetalBackend = self.metalPipeline != nil
+        useMetalBackend = false
 
         // speechTokens is used after the if-else, so declare it in the outer scope
         var speechTokens: [Int] = []
