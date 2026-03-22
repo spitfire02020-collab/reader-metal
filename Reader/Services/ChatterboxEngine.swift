@@ -263,32 +263,42 @@ final class ChatterboxEngine: ObservableObject {
         // ── Initialize Metal LM backend (experimental) ───────────────────────────
         // Metal LM is initialized after ONNX models so that if Metal initialization
         // fails, the ONNX path still works (useMetalLM=false remains the default).
+        //
+        // Guard: only attempt Metal init if metal_weights actually exist in Documents.
+        // This prevents crashes when old stale weights exist from a previous app version
+        // (weights with mismatched tensor names would cause GPU assertion failures).
         if useMetalLM {
-            if let device = MTLCreateSystemDefaultDevice() {
-                let weightsDir = downloadService.modelsDirectory
-                    .appendingPathComponent("metal_weights")
-                do {
-                    let pipeline = try ChatterboxMetalLM(
-                        device: device,
-                        weightsDir: weightsDir,
-                        maxNewTokens: config.maxNewTokens,
-                        repetitionPenalty: config.repetitionPenalty
-                    )
-                    try await pipeline.initialize(
-                        numLayers: 24,
-                        numKVHeads: config.numKVHeads,
-                        headDim: config.headDim,
-                        maxSeqLen: config.maxNewTokens,
-                        device: device
-                    )
-                    self.metalDevice = device
-                    self.metalPipeline = pipeline
-                    chatterboxLogger.info("Metal LM pipeline initialized")
-                } catch {
-                    chatterboxLogger.warning("Metal LM init failed (\(error.localizedDescription)) — falling back to ONNX")
-                }
-            } else {
-                chatterboxLogger.warning("Metal GPU not available, falling back to ONNX")
+            let weightsDir = downloadService.modelsDirectory
+                .appendingPathComponent("metal_weights")
+            let weightsManifest = weightsDir.appendingPathComponent("weights_manifest.json")
+            guard FileManager.default.fileExists(atPath: weightsManifest.path) else {
+                chatterboxLogger.warning("Metal weights not found — skipping Metal LM")
+                // metalPipeline stays nil → ONNX path used automatically
+                return
+            }
+            guard let device = MTLCreateSystemDefaultDevice() else {
+                chatterboxLogger.warning("Metal GPU not available — falling back to ONNX")
+                return
+            }
+            do {
+                let pipeline = try ChatterboxMetalLM(
+                    device: device,
+                    weightsDir: weightsDir,
+                    maxNewTokens: config.maxNewTokens,
+                    repetitionPenalty: config.repetitionPenalty
+                )
+                try await pipeline.initialize(
+                    numLayers: 24,
+                    numKVHeads: config.numKVHeads,
+                    headDim: config.headDim,
+                    maxSeqLen: config.maxNewTokens,
+                    device: device
+                )
+                self.metalDevice = device
+                self.metalPipeline = pipeline
+                chatterboxLogger.info("Metal LM pipeline initialized")
+            } catch {
+                chatterboxLogger.warning("Metal LM init failed (\(error.localizedDescription)) — falling back to ONNX")
             }
         }
     }
