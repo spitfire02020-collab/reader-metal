@@ -46,6 +46,7 @@ public enum LMBackendError: Error, LocalizedError, Sendable {
     case kernelNotFound(String)
     case commandBufferFailed
     case invalidInputShape
+    case onnxSessionFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -54,6 +55,7 @@ public enum LMBackendError: Error, LocalizedError, Sendable {
         case .kernelNotFound(let n): return "Metal kernel not found: \(n)"
         case .commandBufferFailed:   return "Metal command buffer failed"
         case .invalidInputShape:     return "Invalid input shape"
+        case .onnxSessionFailed(let msg): return "ONNX session failed: \(msg)"
         }
     }
 }
