@@ -207,26 +207,33 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
         }
 
         // Prefix length = [conditioning | text], NO speech embed (matches ONNX)
-        let prefixLen = condLen + textLen
-
-        guard let cmd = commandQueue.makeCommandBuffer() else {
-            throw MetalLMError.commandBufferFailed
-        }
+        let totalPrefixLen = condLen + textLen
 
         // Prefill step: process full [conditioning | text] to populate KV cache at position 0.
         // kvWriteOffset=0, kvReadLength=0 (no past to attend to).
-        currentSeqLen = prefixLen
+        // Each step needs its own command buffer — Metal buffers can't be reused after commit+wait.
+        currentSeqLen = totalPrefixLen
+        guard let prefillCmd = commandQueue.makeCommandBuffer() else {
+            throw MetalLMError.commandBufferFailed
+        }
         _ = try forward(
             inputsEmbds: concatBuf,
             kvWriteOffset: 0,
             kvReadLength: 0,
-            commandBuffer: cmd
+            commandBuffer: prefillCmd
         )
-        cmd.commit()
-        cmd.waitUntilCompleted()
+        prefillCmd.commit()
+        prefillCmd.waitUntilCompleted()
+        NSLog("[ChatterboxMetalLM] generate: prefill done, currentSeqLen=\(currentSeqLen)")
 
         // Decode loop
-        for _ in 0..<maxNewTokens {
+        for step in 0..<maxNewTokens {
+            // Each decode step gets a fresh command buffer.
+            // The same buffer cannot be committed twice; waitUntilCompleted() retires it.
+            guard let cmd = commandQueue.makeCommandBuffer() else {
+                throw MetalLMError.commandBufferFailed
+            }
+
             // Forward step: reads concatBuf up to currentSeqLen, writes K/V at currentSeqLen-1,
             // attends over currentSeqLen positions.
             let logitsBuf = try forward(
@@ -269,11 +276,16 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
             }
             let nextToken = Int32(bestIdx)
 
-            if nextToken == MetalLMConfig.stopSpeechToken {
+            if step < 3 || step % 50 == 0 {
+                NSLog("[ChatterboxMetalLM] generate: step=\(step), nextToken=\(nextToken), currentSeqLen=\(currentSeqLen)")
+            }
+
+            if nextToken == 6562 {  // STOP_SPEECH
+                NSLog("[ChatterboxMetalLM] generate: STOP_SPEECH at step=\(step)")
                 break
             }
 
-            if nextToken != MetalLMConfig.startSpeechToken {
+            if nextToken != 6561 {  // skip START_SPEECH in output
                 generatedTokens.append(nextToken)
             }
 
@@ -289,6 +301,8 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
             }
             currentSeqLen += 1
         }
+
+        NSLog("[ChatterboxMetalLM] generate: done, \(generatedTokens.count) tokens generated")
 
         return generatedTokens
     }
