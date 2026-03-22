@@ -197,6 +197,13 @@ final class ModelDownloadService: NSObject, ObservableObject {
             try? FileManager.default.copyItem(atPath: tokenizerSrc, toPath: tokenizerDst)
         }
 
+        // Copy Metal weights from bundle to Documents
+        let metalWeightsSrc = bundleDir.appendingPathComponent("metal_weights")
+        let metalWeightsDst = docsDir.appendingPathComponent("metal_weights")
+        if !FileManager.default.fileExists(atPath: metalWeightsDst.path) {
+            try? FileManager.default.copyItem(at: metalWeightsSrc, to: metalWeightsDst)
+        }
+
         // Update model availability
         await checkModelAvailability()
     }
