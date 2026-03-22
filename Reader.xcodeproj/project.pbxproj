@@ -61,6 +61,7 @@
 		FDCFA371D8640E9286DF379D /* MetalPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DE504760DE77989350B2F3 /* MetalPipeline.swift */; };
 		C48DA3F12D3AB6789ABCDEF0 /* ChatterboxMetalLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = F830F874D8FFF92B953DC8D3 /* ChatterboxMetalLM.swift */; };
 		AA0000010000000000000001 /* default.metallib in Resources */ = {isa = PBXBuildFile; fileRef = 462A943EEF2F97CC3C9E6A49 /* default.metallib */; };
+		AA0000020000000000000003 /* metal_weights in Resources */ = {isa = PBXBuildFile; fileRef = AA0000020000000000000002 /* metal_weights */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -88,6 +89,7 @@
 		40898B2F550FFAA18FC0E111 /* ONNXLMBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ONNXLMBackend.swift; sourceTree = "<group>"; };
 		459FD98D396050E0A5BB9EB4 /* embed_tokens_q4f16_merged.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = embed_tokens_q4f16_merged.onnx; sourceTree = "<group>"; };
 		462A943EEF2F97CC3C9E6A49 /* default.metallib */ = {isa = PBXFileReference; includeInIndex = 1; path = default.metallib; sourceTree = "<group>"; };
+		AA0000020000000000000002 /* metal_weights */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = metal_weights; sourceTree = "<group>"; };
 		498D94830572986300F4DCC2 /* MetalLMConfig.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetalLMConfig.swift; sourceTree = "<group>"; };
 		4A6D8EC036C82852FD4ED0CF /* default_voice.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = default_voice.wav; sourceTree = "<group>"; };
 		4A99F427F5492C78D6F1F528 /* MetalLMBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetalLMBackend.swift; sourceTree = "<group>"; };
@@ -157,6 +159,7 @@
 			children = (
 				0F12580582B61E83294531E6 /* Assets.xcassets */,
 				3D1C33856CCB7D9770CB177C /* ChatterboxModels */,
+				AA0000020000000000000002 /* metal_weights */,
 				462A943EEF2F97CC3C9E6A49 /* default.metallib */,
 			);
 			path = Resources;
@@ -425,6 +428,7 @@
 				3650827F854F77A329DB740B /* language_model_q4f16_merged.onnx in Resources */,
 				614D57E6B9C4B831259EC431 /* speech_encoder_q4f16_merged.onnx in Resources */,
 				B93E7BDB99CFAAFE53D5D40E /* tokenizer.json in Resources */,
+			AA0000020000000000000003 /* metal_weights in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
