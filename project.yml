@@ -19,6 +19,9 @@ targets:
       - path: Reader
         excludes:
           - "**/*.onnx_data"
+      - path: chatterbox-metal-lm/src
+        excludes:
+          - "**/*.modulemap"
     settings:
       base:
         INFOPLIST_FILE: Reader/Info.plist
