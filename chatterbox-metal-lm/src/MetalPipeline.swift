@@ -36,17 +36,19 @@ public final class MetalPipeline: Sendable {
 
     /// - Parameters:
     ///   - device: Metal device
+    ///   - weightsDir: Directory containing float16 weight binaries from metal-export
     ///   - maxNewTokens: Maximum number of new tokens to generate (default 1500)
     ///   - repetitionPenalty: Penalty for repeated tokens (default 1.2, > 1.0 penalizes repeats)
     public init(
         device: MTLDevice,
+        weightsDir: URL,
         maxNewTokens: Int = 1500,
         repetitionPenalty: Float = 1.2
     ) throws {
         self.device = device
         self.maxNewTokens = maxNewTokens
         self.repetitionPenalty = repetitionPenalty
-        self.backend = MetalLMBackend(device: device)
+        self.backend = MetalLMBackend(device: device, weightsDir: weightsDir)
 
         guard let q = device.makeCommandQueue() else {
             throw MetalPipelineError.commandQueueFailed
