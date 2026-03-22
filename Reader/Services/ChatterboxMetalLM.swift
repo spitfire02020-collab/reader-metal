@@ -53,6 +53,7 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
         maxNewTokens: Int = 1500,
         repetitionPenalty: Float = 1.2
     ) throws {
+        NSLog("[ChatterboxMetalLM] init START, device=%@", device.name)
         self.device = device
         self.hidden = MetalLMConfig.hiddenSize
         self.maxSeq = MetalLMConfig.maxSequenceLength
@@ -60,16 +61,20 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
         self.maxNewTokens = maxNewTokens
 
         guard let q = device.makeCommandQueue() else {
+            NSLog("[ChatterboxMetalLM] init FAIL: makeCommandQueue returned nil")
             throw MetalLMError.commandQueueFailed
         }
         self.commandQueue = q
+        NSLog("[ChatterboxMetalLM] init: commandQueue created OK")
 
+        NSLog("[ChatterboxMetalLM] init: creating MetalPipeline...")
         self.pipeline = try MetalPipeline(
             device: device,
             weightsDir: weightsDir,
             maxNewTokens: maxNewTokens,
             repetitionPenalty: repetitionPenalty
         )
+        NSLog("[ChatterboxMetalLM] init: MetalPipeline created OK")
 
         // Pre-allocate buffers
         let fp16 = MemoryLayout<Float16>.size
@@ -82,6 +87,7 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
             options: .storageModeShared
         )!
         self.logitsScratch = UnsafeMutablePointer<Float>.allocate(capacity: vocabSize)
+        NSLog("[ChatterboxMetalLM] init DONE")
     }
 
     deinit {

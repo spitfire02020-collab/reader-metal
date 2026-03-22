@@ -45,10 +45,13 @@ public final class MetalPipeline: LanguageModelBackend, Sendable {
         maxNewTokens: Int = 1500,
         repetitionPenalty: Float = 1.2
     ) throws {
+        NSLog("[MetalPipeline] init START")
         self.device = device
         self.maxNewTokens = maxNewTokens
         self.repetitionPenalty = repetitionPenalty
+        NSLog("[MetalPipeline] init: creating MetalLMBackend...")
         self.backend = try MetalLMBackend(device: device, weightsDir: weightsDir)
+        NSLog("[MetalPipeline] init: MetalLMBackend created OK")
 
         guard let q = device.makeCommandQueue() else {
             throw MetalPipelineError.commandQueueFailed
@@ -65,6 +68,7 @@ public final class MetalPipeline: LanguageModelBackend, Sendable {
             options: .storageModeShared
         )!
         self.logitsScratch = [Float](repeating: 0, count: MetalLMConfig.vocabSize)
+        NSLog("[MetalPipeline] init DONE")
     }
 
     // MARK: - LanguageModelBackend conformance

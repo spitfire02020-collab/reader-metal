@@ -78,17 +78,21 @@ public final class MetalLMBackend: LanguageModelBackend {
     // MARK: - Initialization
 
     public init(device: MTLDevice, weightsDir: URL) throws {
+        NSLog("[MetalLMBackend] init START, device=%@", device.name)
         self.device = device
         self.weightsDir = weightsDir
         guard let q = device.makeCommandQueue() else {
+            NSLog("[MetalLMBackend] init FAIL: makeCommandQueue returned nil")
             throw MetalLMError.commandQueueFailed
         }
         self.commandQueue = q
         self.ropeDimHalf = headDim / 2
+        NSLog("[MetalLMBackend] init: commandQueue OK, loading weights from %@", weightsDir.path)
 
         // Load weights from manifest immediately after device/queue setup
         // This ensures weightBuffers are populated before any forward pass
         try loadWeights()
+        NSLog("[MetalLMBackend] init: weights loaded OK")
     }
 
     // MARK: - LanguageModelBackend
@@ -100,11 +104,16 @@ public final class MetalLMBackend: LanguageModelBackend {
         maxSeqLen: Int,
         device: MTLDevice
     ) async throws {
+        NSLog("[MetalLMBackend] initialize START")
         try compilePipelines()
+        NSLog("[MetalLMBackend] initialize: pipelines compiled OK")
         // Note: loadWeights() was already called in init via weightsDir
         allocateBuffers()
+        NSLog("[MetalLMBackend] initialize: buffers allocated OK")
         try precomputeRoPE()
+        NSLog("[MetalLMBackend] initialize: RoPE precomputed OK")
         try precomputeCausalMask()
+        NSLog("[MetalLMBackend] initialize: causal mask OK")
 
         // KVCacheManager must be created AFTER allocateBuffers so kBuffer/vBuffer are ready
         self.kvCache = KVCacheManager(
