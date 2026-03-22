@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0FAEF31B97C28B0A43E3142D /* WeightLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA3BEBC0DB5B980F44D1C8BA /* WeightLoader.swift */; };
 		106074223DA1B1499E0FFD4D /* VoiceProfileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 136D276230EFC0D9628C5551 /* VoiceProfileTests.swift */; };
 		12010487F4C41EFEDFC6393B /* TextChunker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E05F4D2ADA3A48AC802CB336 /* TextChunker.swift */; };
 		19DA2FC9683E7A181295B62D /* TokenizerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582CB386C3F0D50F8551BB9C /* TokenizerService.swift */; };
@@ -22,7 +23,9 @@
 		44907469286C169F479963EA /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBF4D0CF7F0F5AD94B1918E /* LibraryViewModel.swift */; };
 		46D9E02F513A87419DB3BCAF /* Color+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAEE67288ED13F903EEAC7B8 /* Color+Extensions.swift */; };
 		4AB24BD22B4328865FCE3D8C /* SQLite in Frameworks */ = {isa = PBXBuildFile; productRef = FF3B23747E5E0A6C4E73EA85 /* SQLite */; };
+		4F92D35C22F6AE6377D5B5B8 /* MetalLMConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 498D94830572986300F4DCC2 /* MetalLMConfig.swift */; };
 		515A6F013D20A426D3EDA94F /* embed_tokens_q4f16_merged.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 459FD98D396050E0A5BB9EB4 /* embed_tokens_q4f16_merged.onnx */; };
+		52940F773E282940FD44E6FD /* Q4F16Dequant.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC25B4DD82FCD6755D9D0ED4 /* Q4F16Dequant.swift */; };
 		561C3F3E331D5D84D4419177 /* ChatterboxEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96367034206E129C51F09C14 /* ChatterboxEngine.swift */; };
 		614D57E6B9C4B831259EC431 /* speech_encoder_q4f16_merged.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 9C4332290D269B905B2F1C44 /* speech_encoder_q4f16_merged.onnx */; };
 		61D6B495897667CC6A305365 /* SkeletonLoading.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3FC4CEAF4D3FE54152DEB6 /* SkeletonLoading.swift */; };
@@ -42,16 +45,22 @@
 		AD88E9A4C64E18FEEED98810 /* AudioPlayerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 998DEEE41B2B069602B732FB /* AudioPlayerService.swift */; };
 		B93E7BDB99CFAAFE53D5D40E /* tokenizer.json in Resources */ = {isa = PBXBuildFile; fileRef = CDCB6111E879C860BEF6509A /* tokenizer.json */; };
 		BF808E86179EADAAA69ED85F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0F12580582B61E83294531E6 /* Assets.xcassets */; };
+		C15840C0E26088A2823C476C /* MetalLMBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A99F427F5492C78D6F1F528 /* MetalLMBackend.swift */; };
 		C6E7B09AAC3E5C49BE5B0102 /* ReaderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B58C303DAE833FB27055370 /* ReaderApp.swift */; };
+		C928E9EABDB1BCFFEB47E050 /* ONNXLMBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40898B2F550FFAA18FC0E111 /* ONNXLMBackend.swift */; };
 		C9801D82B3598521F68FBCB0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C7A08DDC8989AC474CA78BF /* ContentView.swift */; };
 		C9D495B65024283A10E11717 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A484B5F72BA8491B42A7EB6A /* LibraryView.swift */; };
 		CADC0F569736BBB92509AD54 /* ModelDownloadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC6E6E74FA806E8B4D80B03D /* ModelDownloadService.swift */; };
+		D6605160C0832100C0AF1A8A /* KVCacheManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D97CD79CD42C6C7C60A628 /* KVCacheManager.swift */; };
 		DBF8C6E775DCFE42863191BE /* HapticFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2D7560B0FD1CA49A4FFDAD0 /* HapticFeedback.swift */; };
 		DDEBC41B6AF0C4F3226D4C51 /* BookParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFCD7FE661A4214FA2CFB3FE /* BookParser.swift */; };
 		E1B64984EF342473BAEA9C17 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92A3FC5F094E7E271ED14097 /* SettingsView.swift */; };
+		E5A5DF19CEA501D564B0A6D2 /* default.metallib in Sources */ = {isa = PBXBuildFile; fileRef = 462A943EEF2F97CC3C9E6A49 /* default.metallib */; };
 		E82E1FAEA3609F64C98EF0A5 /* ServiceContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CF5A1D5C6BB64503D7E4EBF /* ServiceContainer.swift */; };
 		E93D736C29808207D47DCE64 /* default_voice.wav in Resources */ = {isa = PBXBuildFile; fileRef = 4A6D8EC036C82852FD4ED0CF /* default_voice.wav */; };
 		ECA5E0E3D07978F6D54832B3 /* LibraryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B9DEE2C033CD96D4CCEE412 /* LibraryItem.swift */; };
+		FDCFA371D8640E9286DF379D /* MetalPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DE504760DE77989350B2F3 /* MetalPipeline.swift */; };
+		C48DA3F12D3AB6789ABCDEF0 /* ChatterboxMetalLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = F830F874D8FFF92B953DC8D3 /* ChatterboxMetalLM.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,13 +83,23 @@
 		2C81E6F42471465EBDD60823 /* VoiceSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSelectionView.swift; sourceTree = "<group>"; };
 		2F0786B23EDD51A5DD0FAD51 /* PlayerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViewModel.swift; sourceTree = "<group>"; };
 		3D7ABAE630EFCCC5AA154642 /* WebContentExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentExtractor.swift; sourceTree = "<group>"; };
+		3FF81BD47261BD26B1BB4C70 /* MetalLMEncoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetalLMEncoder.swift; sourceTree = "<group>"; };
+		40312106AEFE279D07D7CAA7 /* KVCacheBuffer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KVCacheBuffer.swift; sourceTree = "<group>"; };
+		40898B2F550FFAA18FC0E111 /* ONNXLMBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ONNXLMBackend.swift; sourceTree = "<group>"; };
 		459FD98D396050E0A5BB9EB4 /* embed_tokens_q4f16_merged.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = embed_tokens_q4f16_merged.onnx; sourceTree = "<group>"; };
+		462A943EEF2F97CC3C9E6A49 /* default.metallib */ = {isa = PBXFileReference; includeInIndex = 1; path = default.metallib; sourceTree = "<group>"; };
+		498D94830572986300F4DCC2 /* MetalLMConfig.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetalLMConfig.swift; sourceTree = "<group>"; };
 		4A6D8EC036C82852FD4ED0CF /* default_voice.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = default_voice.wav; sourceTree = "<group>"; };
+		4A99F427F5492C78D6F1F528 /* MetalLMBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetalLMBackend.swift; sourceTree = "<group>"; };
 		4E608B09F90284E5EC2521A7 /* SynthesisDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisDatabase.swift; sourceTree = "<group>"; };
 		582CB386C3F0D50F8551BB9C /* TokenizerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenizerService.swift; sourceTree = "<group>"; };
 		58B56ED5C10DC8E411631EEA /* Jade.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Jade.wav; sourceTree = "<group>"; };
+		61DE504760DE77989350B2F3 /* MetalPipeline.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetalPipeline.swift; sourceTree = "<group>"; };
 		68FE5DFA26167FF456F60EA0 /* ReaderTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ReaderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6B633EFE1B73618814385080 /* MetalLMForward.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetalLMForward.swift; sourceTree = "<group>"; };
 		6C7A08DDC8989AC474CA78BF /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		741CD92CE16B3232155C0424 /* LanguageModelBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LanguageModelBackend.swift; sourceTree = "<group>"; };
+		77787F3BF8001C1322964074 /* MetalLMDecode.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetalLMDecode.swift; sourceTree = "<group>"; };
 		7D1BE4C99722DBE37CC537AA /* Reader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7F6C5F6D8D708F8417D1B670 /* ONNXGraphFixer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ONNXGraphFixer.swift; sourceTree = "<group>"; };
 		8B58C303DAE833FB27055370 /* ReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderApp.swift; sourceTree = "<group>"; };
@@ -95,14 +114,17 @@
 		A041314BF5B5E418A0633EC8 /* Reader-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Reader-Bridging-Header.h"; sourceTree = "<group>"; };
 		A466F10D7E7B427142DCB491 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A484B5F72BA8491B42A7EB6A /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		AA3BEBC0DB5B980F44D1C8BA /* WeightLoader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WeightLoader.swift; sourceTree = "<group>"; };
 		AC46C4EE1E347D29CB58FB6D /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
 		AF7EA5018E4A65164B397831 /* VoiceProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProfile.swift; sourceTree = "<group>"; };
 		B2D7560B0FD1CA49A4FFDAD0 /* HapticFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticFeedback.swift; sourceTree = "<group>"; };
 		BC6E6E74FA806E8B4D80B03D /* ModelDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadService.swift; sourceTree = "<group>"; };
 		BFCD7FE661A4214FA2CFB3FE /* BookParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookParser.swift; sourceTree = "<group>"; };
 		C0166F8ADF8B647AB593A5EE /* TextChunkerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextChunkerTests.swift; sourceTree = "<group>"; };
+		CC25B4DD82FCD6755D9D0ED4 /* Q4F16Dequant.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Q4F16Dequant.swift; sourceTree = "<group>"; };
 		CDCB6111E879C860BEF6509A /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
 		D0C2AB7BF361C2C975E56C61 /* Alexander.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Alexander.wav; sourceTree = "<group>"; };
+		D917B4495E18CA1E18C4DA7B /* MPSGraphEncoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MPSGraphEncoder.swift; sourceTree = "<group>"; };
 		D98663CD0EA309BD4EAC21F8 /* Emily.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Emily.wav; sourceTree = "<group>"; };
 		DC9F02CB5D2F8E7A8CA1C44C /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
 		DE3FC4CEAF4D3FE54152DEB6 /* SkeletonLoading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonLoading.swift; sourceTree = "<group>"; };
@@ -111,6 +133,8 @@
 		E9AC01EA7B1198702B683F86 /* Abigail.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Abigail.wav; sourceTree = "<group>"; };
 		EAEE67288ED13F903EEAC7B8 /* Color+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Color+Extensions.swift"; sourceTree = "<group>"; };
 		EE27603BA268CDF23C5A6DC0 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
+		F5D97CD79CD42C6C7C60A628 /* KVCacheManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KVCacheManager.swift; sourceTree = "<group>"; };
+		F830F874D8FFF92B953DC8D3 /* ChatterboxMetalLM.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatterboxMetalLM.swift; sourceTree = "<group>"; };
 		F8712B5068E891079DC2E31D /* AddContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContentView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -133,6 +157,7 @@
 			children = (
 				0F12580582B61E83294531E6 /* Assets.xcassets */,
 				3D1C33856CCB7D9770CB177C /* ChatterboxModels */,
+				462A943EEF2F97CC3C9E6A49 /* default.metallib */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -205,6 +230,20 @@
 				E05F4D2ADA3A48AC802CB336 /* TextChunker.swift */,
 				582CB386C3F0D50F8551BB9C /* TokenizerService.swift */,
 				3D7ABAE630EFCCC5AA154642 /* WebContentExtractor.swift */,
+				F830F874D8FFF92B953DC8D3 /* ChatterboxMetalLM.swift */,
+				4A99F427F5492C78D6F1F528 /* MetalLMBackend.swift */,
+				498D94830572986300F4DCC2 /* MetalLMConfig.swift */,
+				77787F3BF8001C1322964074 /* MetalLMDecode.swift */,
+				3FF81BD47261BD26B1BB4C70 /* MetalLMEncoder.swift */,
+				6B633EFE1B73618814385080 /* MetalLMForward.swift */,
+				61DE504760DE77989350B2F3 /* MetalPipeline.swift */,
+				AA3BEBC0DB5B980F44D1C8BA /* WeightLoader.swift */,
+				F5D97CD79CD42C6C7C60A628 /* KVCacheManager.swift */,
+				40312106AEFE279D07D7CAA7 /* KVCacheBuffer.swift */,
+				CC25B4DD82FCD6755D9D0ED4 /* Q4F16Dequant.swift */,
+				D917B4495E18CA1E18C4DA7B /* MPSGraphEncoder.swift */,
+				741CD92CE16B3232155C0424 /* LanguageModelBackend.swift */,
+				40898B2F550FFAA18FC0E111 /* ONNXLMBackend.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -300,8 +339,6 @@
 				2DC48F8179AAB89C2D79AE84 /* PBXTargetDependency */,
 			);
 			name = ReaderTests;
-			packageProductDependencies = (
-			);
 			productName = ReaderTests;
 			productReference = 68FE5DFA26167FF456F60EA0 /* ReaderTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -357,9 +394,10 @@
 			mainGroup = 73CE473A89CFE902C734CE7E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite" */,
+				1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite.swift" */,
 				ECA17F6202608D9C8C4C7A85 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 			);
+			productRefGroup = A97F85522AF62C54C5BF2D39 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -424,6 +462,15 @@
 				A78BACED94D81E75AEDF9249 /* VoiceSelectionView.swift in Sources */,
 				346E0B49B8EAA8A6827408A8 /* WaveformView.swift in Sources */,
 				939A3D49B6AA379EEA8435C5 /* WebContentExtractor.swift in Sources */,
+				C15840C0E26088A2823C476C /* MetalLMBackend.swift in Sources */,
+				4F92D35C22F6AE6377D5B5B8 /* MetalLMConfig.swift in Sources */,
+				FDCFA371D8640E9286DF379D /* MetalPipeline.swift in Sources */,
+				C48DA3F12D3AB6789ABCDEF0 /* ChatterboxMetalLM.swift in Sources */,
+				0FAEF31B97C28B0A43E3142D /* WeightLoader.swift in Sources */,
+				D6605160C0832100C0AF1A8A /* KVCacheManager.swift in Sources */,
+				52940F773E282940FD44E6FD /* Q4F16Dequant.swift in Sources */,
+				C928E9EABDB1BCFFEB47E050 /* ONNXLMBackend.swift in Sources */,
+				E5A5DF19CEA501D564B0A6D2 /* default.metallib in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -679,7 +726,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite" */ = {
+		1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/stephencelis/SQLite.swift";
 			requirement = {
@@ -710,7 +757,7 @@
 		};
 		FF3B23747E5E0A6C4E73EA85 /* SQLite */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite" */;
+			package = 1490040ECA8B76D425749F0A /* XCRemoteSwiftPackageReference "SQLite.swift" */;
 			productName = SQLite;
 		};
 /* End XCSwiftPackageProductDependency section */

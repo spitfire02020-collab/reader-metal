@@ -1,0 +1,63 @@
+import Foundation
+import Metal
+
+final class MetalLMDecode {
+    let forward: MetalLMForward
+    let repetitionPenalty: Float
+    private(set) var pastSequenceLength: Int = 0
+
+    var kvCache: KVCacheManager { forward.kvCache }
+
+    init(device: MTLDevice, library: MTLLibrary, weightLoader: WeightLoader, repetitionPenalty: Float = 1.2) throws {
+        self.forward = try MetalLMForward(device: device, library: library, weightLoader: weightLoader)
+        self.repetitionPenalty = repetitionPenalty
+    }
+
+    func reset() {
+        forward.kvCache.reset()
+        pastSequenceLength = 0
+    }
+
+    /// Greedy decode step: argmax + repetition penalty.
+    /// Processes the input embed with growing KV cache.
+    /// Returns next speech token ID (Int32)
+    func step(
+        inputsEmbed: MTLBuffer,
+        inputLength: Int,
+        generatedTokens: [Int32]
+    ) throws -> (logits: [Float], nextToken: Int32) {
+        let logitsBuf = try forward.forward(
+            inputs: inputsEmbed,
+            inputLength: inputLength,
+            pastSequenceLength: pastSequenceLength
+        )
+
+        pastSequenceLength += inputLength
+
+        let logitsPtr = logitsBuf.contents().bindMemory(to: Float.self, capacity: MetalLMConfig.vocabSize)
+        var logits = Array(UnsafeBufferPointer(start: logitsPtr, count: MetalLMConfig.vocabSize))
+
+        // Apply repetition penalty
+        applyRepetitionPenalty(logits: &logits, tokens: generatedTokens)
+
+        // Greedy: argmax
+        var maxIdx = 0
+        var maxVal = logits[0]
+        for i in 1..<logits.count {
+            if logits[i] > maxVal { maxVal = logits[i]; maxIdx = i }
+        }
+
+        return (logits, Int32(maxIdx))
+    }
+
+    private func applyRepetitionPenalty(logits: inout [Float], tokens: [Int32]) {
+        let penalty = repetitionPenalty
+        for t in tokens {
+            let idx = Int(t)
+            if idx < logits.count {
+                if logits[idx] > 0 { logits[idx] /= penalty }
+                else { logits[idx] *= penalty }
+            }
+        }
+    }
+}

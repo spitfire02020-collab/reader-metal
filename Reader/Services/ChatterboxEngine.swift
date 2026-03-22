@@ -161,12 +161,18 @@ final class ChatterboxEngine: ObservableObject {
     /// When false (default), uses the existing ONNX decode path.
     /// When true, uses MetalLMBackend + MetalPipeline for GPU-accelerated inference.
     /// Requires Task 10 (Xcode build config) to be completed for Metal types to be available.
-    private let useMetalLM: Bool = false
+    private let useMetalLM: Bool = true
 
     /// Metal pipeline for GPU-accelerated LM inference.
     /// Set during model loading when useMetalLM = true.
     /// TODO(Task 10): Initialize with MetalLMBackend after Xcode build config is set up.
     private var metalPipeline: (any LanguageModelBackend)?
+
+    /// Alias for metalPipeline — used by the existing decode loop guard at line 1021.
+    /// When non-nil, the Metal GPU decode path is used instead of the ONNX-only path.
+    private var onnxLMBackend: (any LanguageModelBackend)? {
+        metalPipeline
+    }
 
     /// Metal device for GPU inference. Cached for reuse across pipeline calls.
     private var metalDevice: MTLDevice?
@@ -257,33 +263,30 @@ final class ChatterboxEngine: ObservableObject {
         // ── Initialize Metal LM backend (experimental) ───────────────────────────
         // Metal LM is initialized after ONNX models so that if Metal initialization
         // fails, the ONNX path still works (useMetalLM=false remains the default).
-        // TODO(Task 10): Uncomment and wire up once Xcode build config adds
-        // chatterbox-metal-lm as a dependency with MetalLMBackend and MetalPipeline types.
-        //
-        // if useMetalLM {
-        //     guard let device = MTLCreateSystemDefaultDevice() else {
-        //         chatterboxLogger.warning("Metal GPU not available, falling back to ONNX")
-        //     } else {
-        //         self.metalDevice = device
-        //         let weightsDir = downloadService.modelDirectory
-        //             .appendingPathComponent("metal_weights")
-        //         let pipeline = try MetalPipeline(
-        //             device: device,
-        //             weightsDir: weightsDir,
-        //             maxNewTokens: config.maxNewTokens,
-        //             repetitionPenalty: config.repetitionPenalty
-        //         )
-        //         try await pipeline.initialize(
-        //             numLayers: 24,
-        //             numKVHeads: config.numKVHeads,
-        //             headDim: config.headDim,
-        //             maxSeqLen: config.maxNewTokens,
-        //             device: device
-        //         )
-        //         self.metalPipeline = pipeline
-        //         chatterboxLogger.info("Metal LM pipeline initialized")
-        //     }
-        // }
+        if useMetalLM {
+            if let device = MTLCreateSystemDefaultDevice() {
+                self.metalDevice = device
+                let weightsDir = downloadService.modelsDirectory
+                    .appendingPathComponent("metal_weights")
+                let pipeline = try ChatterboxMetalLM(
+                    device: device,
+                    weightsDir: weightsDir,
+                    maxNewTokens: config.maxNewTokens,
+                    repetitionPenalty: config.repetitionPenalty
+                )
+                try await pipeline.initialize(
+                    numLayers: 24,
+                    numKVHeads: config.numKVHeads,
+                    headDim: config.headDim,
+                    maxSeqLen: config.maxNewTokens,
+                    device: device
+                )
+                self.metalPipeline = pipeline
+                chatterboxLogger.info("Metal LM pipeline initialized")
+            } else {
+                chatterboxLogger.warning("Metal GPU not available, falling back to ONNX")
+            }
+        }
     }
 
     private func createSessionOptions(useCoreML: Bool = true) throws -> ORTSessionOptions {
@@ -959,7 +962,7 @@ final class ChatterboxEngine: ObservableObject {
         // Track all generated tokens for repetition penalty, starting with START_SPEECH.
         // Matches reference: generate_tokens = [[START_SPEECH_TOKEN]] initially.
         var generateTokens: [Int] = [config.startSpeechToken]
-        var speechTokens: [Int] = []  // tokens between START_SPEECH and STOP_SPEECH
+        // speechTokens is declared in outer scope above (before the if-else) — reuse it here
 
         let lmInputNames  = try lmSession.inputNames()  as [String]
         let lmOutputNames = try lmSession.outputNames() as [String]
@@ -1011,163 +1014,195 @@ final class ChatterboxEngine: ObservableObject {
 
         let lmOutputNameSet = Set(lmOutputNames)
 
+        // Compute audio sequence length for metalDecodeLoop bridge
+        let textSeqLenFromEmbed = textSeqLen  // rename to avoid confusion in metal path
+
         // ── Decode loop ────────────────────────────────────────────────────────
-        // Each iteration is wrapped in autoreleasepool so ORT's ObjC-autoreleased
-        // tensors (logits, intermediate activations) are freed immediately after
-        // each step rather than accumulating for all 400 steps (~23 GB without this).
-        chatterboxLogger.debug("decode loop start, totalSeqLen=\(totalSeqLen), maxTokens=\(self.config.maxNewTokens)")
+        //
+        // When metalPipeline is available (useMetalLM=true), the Metal GPU pipeline
+        // handles LM forward passes while ONNX Session handles token embedding.
+        // This path avoids ORT's GatherBlockQuantized expansion for the LM decode step.
+        //
+        // When metalPipeline is nil, falls back to the original ORT-only path.
+        let useMetalBackend = self.metalPipeline != nil
 
-        var shouldStopDecoding = false
+        // speechTokens is used after the if-else, so declare it in the outer scope
+        var speechTokens: [Int] = []
 
-        // Phase 1 Optimization: Pre-allocate buffers outside the tight autoregressive loop
-        // to prevent allocating 500+ Swift Arrays per sentence (which triggers ARC thrashing).
-        let dynamicMaxTokens = self.config.maxNewTokens
-        let maxPossibleMaskLen = totalSeqLen + dynamicMaxTokens + 1
+        if useMetalBackend {
+            let afInfo = try scaledAudioFeatures.tensorTypeAndShapeInfo()
+            let audioSeqLen = afInfo.shape[1].intValue
+            chatterboxLogger.debug("decode loop start (Metal GPU path), totalSeqLen=\(totalSeqLen), maxTokens=\(self.config.maxNewTokens)")
+            speechTokens = try await metalDecodeLoop(
+                prefixEmbeds: prefixEmbeds,
+                totalSeqLen: totalSeqLen,
+                audioSeqLen: audioSeqLen,
+                textSeqLen: textSeqLenFromEmbed,
+                embedSession: embedSession,
+                embedInputName: embedInputName,
+                embedOutputName: embedOutputName,
+                numLayers: numLayers
+            )
+        } else {
+            // ── Original ORT-only decode loop ────────────────────────────────────
+            //
+            // Each iteration is wrapped in autoreleasepool so ORT's ObjC-autoreleased
+            // tensors (logits, intermediate activations) are freed immediately after
+            // each step rather than accumulating for all 400 steps (~23 GB without this).
+            chatterboxLogger.debug("decode loop start (ORT path), totalSeqLen=\(totalSeqLen), maxTokens=\(self.config.maxNewTokens)")
 
-        // Pre-allocate the mask buffer as a raw pointer to avoid Swift Array COW overhead
-        let maskBuffer = UnsafeMutableBufferPointer<Int64>.allocate(capacity: maxPossibleMaskLen)
-        defer { maskBuffer.deallocate() }
-        // Fill with ones (attention mask is all-ones)
-        for i in 0..<maxPossibleMaskLen { maskBuffer[i] = 1 }
+            var shouldStopDecoding = false
 
-        for step in 0..<dynamicMaxTokens {
-            try Task.checkCancellation()  // Stop if cancelled
-            chatterboxLogger.debug("decode step \(step): maxToken=\(self.config.maxNewTokens)")
+            // Phase 1 Optimization: Pre-allocate buffers outside the tight autoregressive loop
+            // to prevent allocating 500+ Swift Arrays per sentence (which triggers ARC thrashing).
+            let dynamicMaxTokens = self.config.maxNewTokens
+            let maxPossibleMaskLen = totalSeqLen + dynamicMaxTokens + 1
 
-            var nextStepInputs: [String: ORTValue] = [:]
-            var generatedToken = config.stopSpeechToken
+            // Pre-allocate the mask buffer as a raw pointer to avoid Swift Array COW overhead
+            let maskBuffer = UnsafeMutableBufferPointer<Int64>.allocate(capacity: maxPossibleMaskLen)
+            defer { maskBuffer.deallocate() }
+            // Fill with ones (attention mask is all-ones)
+            for i in 0..<maxPossibleMaskLen { maskBuffer[i] = 1 }
 
-            try autoreleasepool {
-                let lmOutputs = try lmSession.run(
-                    withInputs: lmInputs,
-                    outputNames: lmOutputNameSet,
-                    runOptions: nil
-                )
+            for step in 0..<dynamicMaxTokens {
+                try Task.checkCancellation()  // Stop if cancelled
+                chatterboxLogger.debug("decode step \(step): maxToken=\(self.config.maxNewTokens)")
 
-                guard let logitsValue = lmOutputs[logitsOutputName] else {
-                    throw ChatterboxError.inferenceError("Language model produced no logits at step \(step)")
-                }
+                var nextStepInputs: [String: ORTValue] = [:]
+                var generatedToken = config.stopSpeechToken
 
-                // Logits shape: [1, curSeqLen, vocabSize]
-                // Step 0 (prefill): curSeqLen = totalSeqLen → take last position's logits.
-                // Step k≥1 (decode): curSeqLen = 1          → take the only position.
-                let allLogits  = try extractFloatArray(from: logitsValue)
-                let curSeqLen  = (step == 0) ? totalSeqLen : 1
-                let vocabSize  = allLogits.count / max(curSeqLen, 1)
-                guard vocabSize > 0 else {
-                    throw ChatterboxError.inferenceError("Invalid logits shape at step \(step)")
-                }
-                let lastStart  = (curSeqLen - 1) * vocabSize
-                let lastEnd    = lastStart + vocabSize
-                guard lastEnd <= allLogits.count else {
-                    throw ChatterboxError.inferenceError("Logits slice out of bounds at step \(step)")
-                }
-                let lastPosLogits = Array(allLogits[lastStart..<lastEnd])
-
-                // Greedy decode: argmax + repetition penalty (matches reference exactly).
-                // No temperature scaling, no top-k sampling, no logit masking.
-                generatedToken = greedyNextToken(lastPosLogits, previous: generateTokens)
-                generateTokens.append(generatedToken)
-
-                // Log tokens for debugging repetition patterns
-                // Log more frequently in middle/end (steps 200-800) where issue occurs
-                let shouldLog = step < 10 || step % 20 == 0 || (step > 200 && step < 800)
-                if shouldLog {
-                    let logPos = totalSeqLen + speechTokens.count - 1
-                    chatterboxLogger.debug("step \(step): tok=\(generatedToken), pos=\(logPos)")
-                }
-
-                // Detect token repetition patterns (3-6 word sequences = ~6-18 tokens)
-                if speechTokens.count >= 6 {
-                    let recentTokens = Array(speechTokens.suffix(12))
-                    // Check for 3-token repeat (6 tokens back)
-                    if recentTokens.count >= 6 {
-                        let threeBack = speechTokens[speechTokens.count - 6]
-                        if generatedToken == threeBack {
-                            chatterboxLogger.warning("REPETITION DETECTED: token \(generatedToken) repeats 6 positions back at step \(step)")
-                        }
-                    }
-                    // Check for 6-token repeat pattern
-                    if recentTokens.count >= 12 {
-                        let last6 = Array(speechTokens.suffix(6))
-                        let prev6 = Array(speechTokens.dropLast(6).suffix(6))
-                        if last6 == prev6 {
-                            chatterboxLogger.warning("REPETITION PATTERN: 6-token sequence repeats at step \(step): \(last6)")
-                        }
-                    }
-                }
-
-                // Check for STOP_SPEECH BEFORE adding to speechTokens
-                // Matches Python: speech_tokens = generate_tokens[:, 1:-1] strips START and STOP
-                if generatedToken == config.stopSpeechToken {
-                    chatterboxLogger.info("STOP_SPEECH detected at step \(step)")
-                    shouldStopDecoding = true
-                    // Don't return here - let code flow to line 498 which breaks the loop
-                } else {
-                    speechTokens.append(generatedToken)
-                }
-
-                // ── Prepare next-step inputs ───────────────────────────────────
-                // Embed the newly generated token: [1, 1] → [1, 1, hiddenDim]
-                // CPU Opt: Reuse pre-allocated buffer for the token ID tensor.
-                reusableNextTokenBuffer[0] = Int64(generatedToken)
-                let nextTokenTensor = try createInt64TensorFromBuffer(
-                    reusableNextTokenBuffer, count: 1, shape: [1, 1]
-                )
-                let nextEmbedOutputs = try embedSession.run(
-                    withInputs: [embedInputName: nextTokenTensor],
-                    outputNames: Set([embedOutputName]),
-                    runOptions: nil
-                )
-                guard let nextEmbed = nextEmbedOutputs[embedOutputName] else {
-                    shouldStopDecoding = true
-                    return
-                }
-
-                // Position of the next token to be generated
-                // After prefill  (step=0, |speechTokens|=1): next pos = totalSeqLen
-                // After decode k (step=k, |speechTokens|=k+1): next pos = totalSeqLen + k
-                let nextPos     = Int64(totalSeqLen + speechTokens.count)
-                let nextMaskLen = totalSeqLen + speechTokens.count
-
-                // CPU Opt: Reuse pre-allocated buffers instead of creating new tensors each step.
-                reusablePositionIdBuffer[0] = nextPos
-                let nextPosTensor = try createInt64TensorFromBuffer(
-                    reusablePositionIdBuffer, count: 1, shape: [1, 1]
-                )
-
-                // Debug: Log position IDs at key steps to verify they're correct at step 500+
-                if step == 100 || step == 300 || step == 500 || step == 700 || step == 900 {
-                    chatterboxLogger.debug("POSITION CHECK step \(step): nextPos=\(nextPos), maskLen=\(nextMaskLen), totalSeqLen=\(totalSeqLen)")
-                }
-
-                nextStepInputs = [
-                    "inputs_embeds":  nextEmbed,
-                    "position_ids":   nextPosTensor,
-                    // Reuse pre-allocated mask buffer instead of allocating new array each step
-                    "attention_mask": try fillInt64Tensor(
-                        buffer: maskBuffer, count: nextMaskLen, shape: [1, NSNumber(value: nextMaskLen)]
+                try autoreleasepool {
+                    let lmOutputs = try lmSession.run(
+                        withInputs: lmInputs,
+                        outputNames: lmOutputNameSet,
+                        runOptions: nil
                     )
-                ]
 
-                // Carry KV-cache forward:
-                //   LM output: present.{layer}.key/value
-                //   LM input:  past_key_values.{layer}.key/value
-                for layer in 0..<numLayers {
-                    if let kv = lmOutputs["present.\(layer).key"] {
-                        nextStepInputs["past_key_values.\(layer).key"] = kv
+                    guard let logitsValue = lmOutputs[logitsOutputName] else {
+                        throw ChatterboxError.inferenceError("Language model produced no logits at step \(step)")
                     }
-                    if let kv = lmOutputs["present.\(layer).value"] {
-                        nextStepInputs["past_key_values.\(layer).value"] = kv
+
+                    // Logits shape: [1, curSeqLen, vocabSize]
+                    // Step 0 (prefill): curSeqLen = totalSeqLen → take last position's logits.
+                    // Step k≥1 (decode): curSeqLen = 1          → take the only position.
+                    let allLogits  = try extractFloatArray(from: logitsValue)
+                    let curSeqLen  = (step == 0) ? totalSeqLen : 1
+                    let vocabSize  = allLogits.count / max(curSeqLen, 1)
+                    guard vocabSize > 0 else {
+                        throw ChatterboxError.inferenceError("Invalid logits shape at step \(step)")
                     }
+                    let lastStart  = (curSeqLen - 1) * vocabSize
+                    let lastEnd    = lastStart + vocabSize
+                    guard lastEnd <= allLogits.count else {
+                        throw ChatterboxError.inferenceError("Logits slice out of bounds at step \(step)")
+                    }
+                    let lastPosLogits = Array(allLogits[lastStart..<lastEnd])
+
+                    // Greedy decode: argmax + repetition penalty (matches reference exactly).
+                    // No temperature scaling, no top-k sampling, no logit masking.
+                    generatedToken = greedyNextToken(lastPosLogits, previous: generateTokens)
+                    generateTokens.append(generatedToken)
+
+                    // Log tokens for debugging repetition patterns
+                    // Log more frequently in middle/end (steps 200-800) where issue occurs
+                    let shouldLog = step < 10 || step % 20 == 0 || (step > 200 && step < 800)
+                    if shouldLog {
+                        let logPos = totalSeqLen + speechTokens.count - 1
+                        chatterboxLogger.debug("step \(step): tok=\(generatedToken), pos=\(logPos)")
+                    }
+
+                    // Detect token repetition patterns (3-6 word sequences = ~6-18 tokens)
+                    if speechTokens.count >= 6 {
+                        let recentTokens = Array(speechTokens.suffix(12))
+                        // Check for 3-token repeat (6 tokens back)
+                        if recentTokens.count >= 6 {
+                            let threeBack = speechTokens[speechTokens.count - 6]
+                            if generatedToken == threeBack {
+                                chatterboxLogger.warning("REPETITION DETECTED: token \(generatedToken) repeats 6 positions back at step \(step)")
+                            }
+                        }
+                        // Check for 6-token repeat pattern
+                        if recentTokens.count >= 12 {
+                            let last6 = Array(speechTokens.suffix(6))
+                            let prev6 = Array(speechTokens.dropLast(6).suffix(6))
+                            if last6 == prev6 {
+                                chatterboxLogger.warning("REPETITION PATTERN: 6-token sequence repeats at step \(step): \(last6)")
+                            }
+                        }
+                    }
+
+                    // Check for STOP_SPEECH BEFORE adding to speechTokens
+                    // Matches Python: speech_tokens = generate_tokens[:, 1:-1] strips START and STOP
+                    if generatedToken == config.stopSpeechToken {
+                        chatterboxLogger.info("STOP_SPEECH detected at step \(step)")
+                        shouldStopDecoding = true
+                        // Don't return here - let code flow to line 498 which breaks the loop
+                    } else {
+                        speechTokens.append(generatedToken)
+                    }
+
+                    // ── Prepare next-step inputs ───────────────────────────────────
+                    // Embed the newly generated token: [1, 1] → [1, 1, hiddenDim]
+                    // CPU Opt: Reuse pre-allocated buffer for the token ID tensor.
+                    reusableNextTokenBuffer[0] = Int64(generatedToken)
+                    let nextTokenTensor = try createInt64TensorFromBuffer(
+                        reusableNextTokenBuffer, count: 1, shape: [1, 1]
+                    )
+                    let nextEmbedOutputs = try embedSession.run(
+                        withInputs: [embedInputName: nextTokenTensor],
+                        outputNames: Set([embedOutputName]),
+                        runOptions: nil
+                    )
+                    guard let nextEmbed = nextEmbedOutputs[embedOutputName] else {
+                        shouldStopDecoding = true
+                        return
+                    }
+
+                    // Position of the next token to be generated
+                    // After prefill  (step=0, |speechTokens|=1): next pos = totalSeqLen
+                    // After decode k (step=k, |speechTokens|=k+1): next pos = totalSeqLen + k
+                    let nextPos     = Int64(totalSeqLen + speechTokens.count)
+                    let nextMaskLen = totalSeqLen + speechTokens.count
+
+                    // CPU Opt: Reuse pre-allocated buffers instead of creating new tensors each step.
+                    reusablePositionIdBuffer[0] = nextPos
+                    let nextPosTensor = try createInt64TensorFromBuffer(
+                        reusablePositionIdBuffer, count: 1, shape: [1, 1]
+                    )
+
+                    // Debug: Log position IDs at key steps to verify they're correct at step 500+
+                    if step == 100 || step == 300 || step == 500 || step == 700 || step == 900 {
+                        chatterboxLogger.debug("POSITION CHECK step \(step): nextPos=\(nextPos), maskLen=\(nextMaskLen), totalSeqLen=\(totalSeqLen)")
+                    }
+
+                    nextStepInputs = [
+                        "inputs_embeds":  nextEmbed,
+                        "position_ids":   nextPosTensor,
+                        // Reuse pre-allocated mask buffer instead of allocating new array each step
+                        "attention_mask": try fillInt64Tensor(
+                            buffer: maskBuffer, count: nextMaskLen, shape: [1, NSNumber(value: nextMaskLen)]
+                        )
+                    ]
+
+                    // Carry KV-cache forward:
+                    //   LM output: present.{layer}.key/value
+                    //   LM input:  past_key_values.{layer}.key/value
+                    for layer in 0..<numLayers {
+                        if let kv = lmOutputs["present.\(layer).key"] {
+                            nextStepInputs["past_key_values.\(layer).key"] = kv
+                        }
+                        if let kv = lmOutputs["present.\(layer).value"] {
+                            nextStepInputs["past_key_values.\(layer).value"] = kv
+                        }
+                    }
+                    // lmOutputs goes out of scope here; autoreleasepool drains ORT's
+                    // autoreleased logits and activation tensors immediately.
                 }
-                // lmOutputs goes out of scope here; autoreleasepool drains ORT's
-                // autoreleased logits and activation tensors immediately.
-            }
 
-            if generatedToken == config.stopSpeechToken || shouldStopDecoding { break }
-            // Assigning nextStepInputs releases the old lmInputs dict (previous KV cache).
-            lmInputs = nextStepInputs
+                if generatedToken == config.stopSpeechToken || shouldStopDecoding { break }
+                // Assigning nextStepInputs releases the old lmInputs dict (previous KV cache).
+                lmInputs = nextStepInputs
+            }
         }
 
         // All tokens generated between START_SPEECH and STOP_SPEECH are valid codec tokens.
@@ -1764,6 +1799,68 @@ final class ChatterboxEngine: ObservableObject {
         }
 
         chatterboxLogger.debug("writeWAV: wrote \(samples.count) samples to \(url.lastPathComponent)")
+    }
+
+    // MARK: - Metal LM Decode Loop
+
+    /// Metal GPU decode loop — uses ChatterboxMetalLM.generate() to produce speech tokens.
+    ///
+    /// This method bridges between the ONNX embedding pipeline (embedTokensSession) and the
+    /// Metal LM pipeline (metalPipeline). It:
+    ///   1. Extracts conditioning + text embeddings from the ORTValue prefix buffer
+    ///   2. Embeds START_SPEECH token via the ONNX embed session
+    ///   3. Calls metalPipeline.generate() for full prefill + autoregressive decode
+    ///   4. Returns the generated speech token IDs (excluding START_SPEECH / STOP_SPEECH)
+    private func metalDecodeLoop(
+        prefixEmbeds: ORTValue,
+        totalSeqLen: Int,
+        audioSeqLen: Int,
+        textSeqLen: Int,
+        embedSession: ORTSession,
+        embedInputName: String,
+        embedOutputName: String,
+        numLayers: Int
+    ) async throws -> [Int] {
+        guard let pipeline = self.metalPipeline as? ChatterboxMetalLM else {
+            throw ChatterboxError.inferenceError("Metal pipeline not initialized or wrong type")
+        }
+
+        // Extract prefix embeddings as Float32
+        let prefixFloats = try extractFloatArrayFromFloat16(from: prefixEmbeds)
+        let hiddenSize = 1024
+
+        // Split prefix into conditioning [audioSeqLen, 1024] and text [textSeqLen, 1024]
+        var conditioning = [Float](repeating: 0, count: audioSeqLen * hiddenSize)
+        var textEmbed = [Float](repeating: 0, count: textSeqLen * hiddenSize)
+        for i in 0..<(audioSeqLen * hiddenSize) {
+            conditioning[i] = prefixFloats[i]
+        }
+        for i in 0..<(textSeqLen * hiddenSize) {
+            textEmbed[i] = prefixFloats[audioSeqLen * hiddenSize + i]
+        }
+
+        // Embed START_SPEECH token to get the speech embedding
+        let startSpeechToken = Int64(config.startSpeechToken)
+        let startSpeechTensor = try createInt64Tensor([startSpeechToken], shape: [1, 1])
+        let embedOutputs = try embedSession.run(
+            withInputs: [embedInputName: startSpeechTensor],
+            outputNames: Set([embedOutputName]),
+            runOptions: nil
+        )
+        guard let speechEmbedValue = embedOutputs[embedOutputName] else {
+            throw ChatterboxError.inferenceError("Embedding session produced no output for START_SPEECH")
+        }
+        let speechEmbed = try extractFloatArray(from: speechEmbedValue)
+
+        // Run full Metal decode loop (prefill + autoregressive generate)
+        let generatedTokens = try pipeline.generate(
+            conditioning: conditioning,
+            textEmbed: textEmbed,
+            speechEmbed: speechEmbed
+        )
+
+        chatterboxLogger.debug("metalDecodeLoop: generated \(generatedTokens.count) tokens")
+        return generatedTokens.map { Int($0) }
     }
 }
 
