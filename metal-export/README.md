@@ -16,7 +16,7 @@ The exported model uses this configuration (GPT-2 Medium for Chatterbox Turbo):
 | n_positions | 1500 |
 | n_embd (hidden_size) | 1024 |
 | n_layer | 24 |
-| n_head | 80 |
+| n_head | 16 |
 | n_inner | 4096 |
 | activation_function | gelu |
 | eos_token_id | 6562 (STOP_SPEECH) |

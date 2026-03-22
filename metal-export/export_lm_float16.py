@@ -34,6 +34,9 @@ import torch.nn.functional as F
 from transformers import GPT2Config
 from transformers.pytorch_utils import Conv1D
 
+# Fixed seed for reproducible export and verification
+torch.manual_seed(42)
+
 
 class GPT2Attention(nn.Module):
     """GPT2 Attention layer - simplified for ONNX export."""
@@ -338,6 +341,57 @@ def export_language_model(
     print("\n1. Creating GPT2NoEmbed model...")
     model = GPT2NoEmbed(config)
     model.eval()
+
+    # Try to load trained weights
+    weight_source = "random (no trained weights found)"
+    state_dict = None
+
+    # Check for local checkpoint
+    checkpoint_paths = [
+        os.path.expanduser("~/tmp/chatterbox_turbo/"),
+        "/tmp/chatterbox_turbo/",
+    ]
+    for ckpt_dir in checkpoint_paths:
+        safetensor_path = os.path.join(ckpt_dir, "t3_turbo_v1.safetensors")
+        if os.path.exists(safetensor_path):
+            print(f"   Found checkpoint at {safetensor_path}")
+            try:
+                from safetensors.torch import load_file
+                state_dict = load_file(safetensor_path)
+                if "model" in state_dict.keys():
+                    state_dict = state_dict["model"][0]
+                weight_source = "safetensor checkpoint"
+                print(f"   Loaded weights from {safetensor_path}")
+                break
+            except Exception as e:
+                print(f"   Failed to load safetensor: {e}")
+                state_dict = None
+
+    # Try importing ChatterboxTurboTTS if no checkpoint found
+    if state_dict is None:
+        try:
+            from chatterbox_turbo import ChatterboxTurboTTS
+            print("   Found chatterbox_turbo package, loading from pretrained...")
+            tts = ChatterboxTurboTTS.from_pretrained(device="cpu")
+            t3_model = tts.t3.tfmr  # GPT2Model
+            state_dict = t3_model.state_dict()
+            weight_source = "ChatterboxTurboTTS pretrained"
+            print(f"   Loaded weights from ChatterboxTurboTTS")
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"   Failed to load from ChatterboxTurboTTS: {e}")
+
+    # Apply loaded weights if available
+    if state_dict is not None:
+        try:
+            model.load_state_dict(state_dict, strict=False)
+            print(f"   Successfully loaded trained weights")
+        except Exception as e:
+            print(f"   Failed to apply state_dict: {e}")
+            print("   Using randomly initialized weights")
+
+    print(f"   Weight source: {weight_source}")
 
     # Convert to float16 for export
     print("   Converting model to float16...")
