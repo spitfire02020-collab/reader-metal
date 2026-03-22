@@ -60,8 +60,13 @@
 		ECA5E0E3D07978F6D54832B3 /* LibraryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B9DEE2C033CD96D4CCEE412 /* LibraryItem.swift */; };
 		FDCFA371D8640E9286DF379D /* MetalPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DE504760DE77989350B2F3 /* MetalPipeline.swift */; };
 		C48DA3F12D3AB6789ABCDEF0 /* ChatterboxMetalLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = F830F874D8FFF92B953DC8D3 /* ChatterboxMetalLM.swift */; };
-		AA0000010000000000000001 /* default.metallib in Resources */ = {isa = PBXBuildFile; fileRef = 462A943EEF2F97CC3C9E6A49 /* default.metallib */; };
 		AA0000020000000000000003 /* metal_weights in Resources */ = {isa = PBXBuildFile; fileRef = AA0000020000000000000002 /* metal_weights */; };
+		AA000010000000000000010 /* Attention.metal in Sources */ = {isa = PBXBuildFile; fileRef = AA000010000000000000011 /* Attention.metal */; };
+		AA000010000000000000012 /* LMForward.metal in Sources */ = {isa = PBXBuildFile; fileRef = AA000010000000000000013 /* LMForward.metal */; };
+		AA000010000000000000014 /* MaskCompute.metal in Sources */ = {isa = PBXBuildFile; fileRef = AA000010000000000000015 /* MaskCompute.metal */; };
+		AA000010000000000000016 /* TanhGelu.metal in Sources */ = {isa = PBXBuildFile; fileRef = AA000010000000000000017 /* TanhGelu.metal */; };
+		AA000010000000000000018 /* GEMMMetal.metal in Sources */ = {isa = PBXBuildFile; fileRef = AA000010000000000000019 /* GEMMMetal.metal */; };
+		AA00001000000000000001A /* LanguageModel.metal in Sources */ = {isa = PBXBuildFile; fileRef = AA00001000000000000001B /* LanguageModel.metal */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -88,7 +93,6 @@
 		40312106AEFE279D07D7CAA7 /* KVCacheBuffer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KVCacheBuffer.swift; sourceTree = "<group>"; };
 		40898B2F550FFAA18FC0E111 /* ONNXLMBackend.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ONNXLMBackend.swift; sourceTree = "<group>"; };
 		459FD98D396050E0A5BB9EB4 /* embed_tokens_q4f16_merged.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = embed_tokens_q4f16_merged.onnx; sourceTree = "<group>"; };
-		462A943EEF2F97CC3C9E6A49 /* default.metallib */ = {isa = PBXFileReference; includeInIndex = 1; path = default.metallib; sourceTree = "<group>"; };
 		AA0000020000000000000002 /* metal_weights */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder; path = metal_weights; sourceTree = "<group>"; };
 		498D94830572986300F4DCC2 /* MetalLMConfig.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetalLMConfig.swift; sourceTree = "<group>"; };
 		4A6D8EC036C82852FD4ED0CF /* default_voice.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = default_voice.wav; sourceTree = "<group>"; };
@@ -138,6 +142,12 @@
 		F5D97CD79CD42C6C7C60A628 /* KVCacheManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KVCacheManager.swift; sourceTree = "<group>"; };
 		F830F874D8FFF92B953DC8D3 /* ChatterboxMetalLM.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatterboxMetalLM.swift; sourceTree = "<group>"; };
 		F8712B5068E891079DC2E31D /* AddContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddContentView.swift; sourceTree = "<group>"; };
+		AA000010000000000000011 /* Attention.metal */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.metal; path = Attention.metal; sourceTree = "<group>"; };
+		AA000010000000000000013 /* LMForward.metal */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.metal; path = LMForward.metal; sourceTree = "<group>"; };
+		AA000010000000000000015 /* MaskCompute.metal */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.metal; path = MaskCompute.metal; sourceTree = "<group>"; };
+		AA000010000000000000017 /* TanhGelu.metal */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.metal; path = TanhGelu.metal; sourceTree = "<group>"; };
+		AA000010000000000000019 /* GEMMMetal.metal */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.metal; path = GEMMMetal.metal; sourceTree = "<group>"; };
+		AA00001000000000000001B /* LanguageModel.metal */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.metal; path = LanguageModel.metal; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -160,7 +170,6 @@
 				0F12580582B61E83294531E6 /* Assets.xcassets */,
 				3D1C33856CCB7D9770CB177C /* ChatterboxModels */,
 				AA0000020000000000000002 /* metal_weights */,
-				462A943EEF2F97CC3C9E6A49 /* default.metallib */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -247,6 +256,12 @@
 				D917B4495E18CA1E18C4DA7B /* MPSGraphEncoder.swift */,
 				741CD92CE16B3232155C0424 /* LanguageModelBackend.swift */,
 				40898B2F550FFAA18FC0E111 /* ONNXLMBackend.swift */,
+				AA000010000000000000011 /* Attention.metal */,
+				AA000010000000000000013 /* LMForward.metal */,
+				AA000010000000000000015 /* MaskCompute.metal */,
+				AA000010000000000000017 /* TanhGelu.metal */,
+				AA000010000000000000019 /* GEMMMetal.metal */,
+				AA00001000000000000001B /* LanguageModel.metal */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -475,6 +490,12 @@
 				D6605160C0832100C0AF1A8A /* KVCacheManager.swift in Sources */,
 				52940F773E282940FD44E6FD /* Q4F16Dequant.swift in Sources */,
 				C928E9EABDB1BCFFEB47E050 /* ONNXLMBackend.swift in Sources */,
+				AA000010000000000000010 /* Attention.metal in Sources */,
+				AA000010000000000000012 /* LMForward.metal in Sources */,
+				AA000010000000000000014 /* MaskCompute.metal in Sources */,
+				AA000010000000000000016 /* TanhGelu.metal in Sources */,
+				AA000010000000000000018 /* GEMMMetal.metal in Sources */,
+				AA00001000000000000001A /* LanguageModel.metal in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
