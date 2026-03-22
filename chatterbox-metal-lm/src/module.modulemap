@@ -1,0 +1,5 @@
+module MetalKernels {
+    export *
+    umbrella header "TanhGelu.metal"
+    umbrella header "MaskCompute.metal"
+}
