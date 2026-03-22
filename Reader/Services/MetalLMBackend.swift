@@ -686,7 +686,6 @@ public final class MetalLMBackend: LanguageModelBackend {
               let enc = cmd.makeComputeCommandEncoder() else {
             throw MetalLMError.commandBufferFailed
         }
-        defer { enc.endEncoding() }
         NSLog("[MetalLMBackend] precomputeRoPE: commandBuffer+encoder created OK, encoding...")
 
         guard let ropeLutFunc = library.makeFunction(name: "compute_rope_lut") else {
@@ -714,6 +713,9 @@ public final class MetalLMBackend: LanguageModelBackend {
         enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)
         NSLog("[MetalLMBackend] precomputeRoPE: dispatching...")
 
+        // MUST end encoding BEFORE commit — Metal asserts if you commit while encoding is in progress.
+        // defer is removed and endEncoding is called explicitly before commit.
+        enc.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
         NSLog("[MetalLMBackend] precomputeRoPE: DONE")
@@ -725,8 +727,7 @@ public final class MetalLMBackend: LanguageModelBackend {
               let enc = cmd.makeComputeCommandEncoder() else {
             throw MetalLMError.commandBufferFailed
         }
-        NSLog("[MetalLMBackend] precomputeCausalMask: commandBuffer+encoder created OK")
-        defer { enc.endEncoding() }
+        NSLog("[MetalLMBackend] precomputeCausalMask: commandBuffer+encoder created OK, encoding...")
 
         guard let maskFunc = library.makeFunction(name: "causal_mask_kernel") else {
             throw MetalLMError.kernelNotFound("causal_mask_kernel")
@@ -748,6 +749,8 @@ public final class MetalLMBackend: LanguageModelBackend {
         enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)
         NSLog("[MetalLMBackend] precomputeCausalMask: dispatching...")
 
+        // MUST end encoding BEFORE commit — Metal asserts if you commit while encoding is in progress.
+        enc.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
         NSLog("[MetalLMBackend] precomputeCausalMask: DONE")
