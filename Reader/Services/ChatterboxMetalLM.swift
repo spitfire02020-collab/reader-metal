@@ -216,7 +216,7 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
         guard let prefillCmd = commandQueue.makeCommandBuffer() else {
             throw MetalLMError.commandBufferFailed
         }
-        _ = try forward(
+        let prefillLogitsBuf = try forward(
             inputsEmbds: concatBuf,
             kvWriteOffset: 0,
             kvReadLength: 0,
@@ -224,6 +224,18 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
         )
         prefillCmd.commit()
         prefillCmd.waitUntilCompleted()
+
+        // Log prefill logits
+        let prefillLogitsPtr = prefillLogitsBuf.contents().bindMemory(to: Float.self, capacity: vocabSize)
+        var prefillMaxVal = prefillLogitsPtr[0]
+        var prefillMaxIdx = 0
+        for i in 1..<vocabSize {
+            if prefillLogitsPtr[i] > prefillMaxVal {
+                prefillMaxVal = prefillLogitsPtr[i]
+                prefillMaxIdx = i
+            }
+        }
+        NSLog("[ChatterboxMetalLM] generate: prefill logits max=\(prefillMaxVal), argmax=\(prefillMaxIdx), logits[0]=\(prefillLogitsPtr[0]), logits[6561]=\(prefillLogitsPtr[6561]), logits[6562]=\(prefillLogitsPtr[6562])")
         NSLog("[ChatterboxMetalLM] generate: prefill done, currentSeqLen=\(currentSeqLen)")
 
         // Decode loop
@@ -249,6 +261,17 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
 
             // Copy logits to scratch
             let logitsPtr = logitsBuf.contents().bindMemory(to: Float.self, capacity: vocabSize)
+            if step < 3 {
+                var maxVal = logitsPtr[0]
+                var maxIdx = 0
+                for i in 1..<vocabSize {
+                    if logitsPtr[i] > maxVal {
+                        maxVal = logitsPtr[i]
+                        maxIdx = i
+                    }
+                }
+                NSLog("[ChatterboxMetalLM] generate: step=\(step) logits max=\(maxVal), argmax=\(maxIdx), logits[0]=\(logitsPtr[0]), logits[6561]=\(logitsPtr[6561])")
+            }
             for i in 0..<vocabSize {
                 logitsScratch[i] = logitsPtr[i]
             }
