@@ -28,19 +28,22 @@ public final class MetalLMBackend: LanguageModelBackend {
     // KV Cache
     private var kvCache: KVCacheManager!
 
-    // Weight buffers (float16) — keyed by ONNX tensor name
-    // TODO: Verify weight names from Task 1 ONNX export (these are GPT-2 style placeholders)
+    // Weight buffers (float16) — keyed by ONNX tensor name from weights_manifest.json
     private var weightBuffers: [String: MTLBuffer] = [:]
+
+    // Weights directory (set during init)
+    private let weightsDir: URL
 
     // Pre-allocated activation buffers (half/float16)
     // Shapes: row-major, [rows, cols] or flattened as [total]
-    private var qkvBuffer: MTLBuffer!           // [1, 1, 7168] = 7168 half (QKV fused output)
-    private var qBuffer: MTLBuffer!               // [80, 64] = 5120 half
-    private var kWriteBuffer: MTLBuffer!          // [16, 64] = 1024 half (single-position K)
-    private var vWriteBuffer: MTLBuffer!          // [16, 64] = 1024 half (single-position V)
+    // NOTE: For GPT2NoEmbed, QKV = 3072 = 16*64*3 (standard MHA, not GQA)
+    private var qkvBuffer: MTLBuffer!           // [1, 1, 3072] = 3072 half (GPT2NoEmbed QKV fused output)
+    private var qBuffer: MTLBuffer!               // [16, 64] = 1024 half (GPT2NoEmbed Q)
+    private var kWriteBuffer: MTLBuffer!          // [16, 64] = 1024 half (GPT2NoEmbed K)
+    private var vWriteBuffer: MTLBuffer!          // [16, 64] = 1024 half (GPT2NoEmbed V)
     private var kBuffer: MTLBuffer!              // [16, maxSeqLen, 64] half (KV cache key buffer)
     private var vBuffer: MTLBuffer!              // [16, maxSeqLen, 64] half (KV cache value buffer)
-    private var attnOutBuffer: MTLBuffer!        // [80, 64] = 5120 half
+    private var attnOutBuffer: MTLBuffer!        // [16, 64] = 1024 half (GPT2NoEmbed attn output)
     private var ln1OutBuffer: MTLBuffer!         // [1, 1, 1024] = 1024 half
     private var residualBuffer: MTLBuffer!        // [1, 1, 1024] = 1024 half
     private var ln2OutBuffer: MTLBuffer!         // [1, 1, 1024] = 1024 half
@@ -67,15 +70,29 @@ public final class MetalLMBackend: LanguageModelBackend {
     private let maxSeqLen = MetalLMConfig.maxSequenceLength
     private let ropeDimHalf: Int  // headDim / 2 = 32
 
+    // GPT2NoEmbed uses standard MHA: 16 heads × 64 dim = 1024 per Q/K/V
+    // This differs from MetalLMBackend's GQA design (80 Q + 16 KV).
+    // Buffer sizes here use 16 for Q/K/V to match GPT2NoEmbed.
+    private let gpt2NumHeads = 16
+
     // MARK: - Initialization
 
-    public init(device: MTLDevice) {
+    public init(device: MTLDevice, weightsDir: URL) {
         self.device = device
+        self.weightsDir = weightsDir
         guard let q = device.makeCommandQueue() else {
             fatalError("MetalLMBackend: could not create command queue")
         }
         self.commandQueue = q
         self.ropeDimHalf = headDim / 2
+
+        // Load weights from manifest immediately after device/queue setup
+        // This ensures weightBuffers are populated before any forward pass
+        do {
+            try loadWeights()
+        } catch {
+            fatalError("MetalLMBackend: failed to load weights: \(error)")
+        }
     }
 
     // MARK: - LanguageModelBackend
@@ -88,7 +105,7 @@ public final class MetalLMBackend: LanguageModelBackend {
         device: MTLDevice
     ) async throws {
         try compilePipelines()
-        try loadWeights()  // Load weights before allocating buffers (some buffer sizes depend on weights)
+        // Note: loadWeights() was already called in init via weightsDir
         allocateBuffers()
         try precomputeRoPE()
         try precomputeCausalMask()
@@ -156,24 +173,25 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 2. QKV projection: qkv = gemm_nt(ln1_out, w_qkv)
-        // ln1_out: [1,1,1024], w_qkv: [7168, 1024] → qkv: [1,1,7168]
+        // 2. QKV projection: qkv = gemm_nt(ln1_out, c_attn.weight)
+        // ln1_out: [1,1,1024], c_attn.weight: [1024, 3072] in ONNX → [3072, 1024] in memory
         // gemm_nt: C = A @ B^T, A[M,K], B[N,K] row-major → C[M,N]
-        // M=1, N=7168, K=1024
+        // M=1, N=3072 (16*64*3 for standard MHA), K=1024
         try runGEMM_NT(
             A: ln1OutBuffer,
-            B: weight("h.\(layer).attn.qkv_proj.weight"),
+            B: weight("h.\(layer).attn.c_attn.weight"),
             C: qkvBuffer,
             M: 1,
-            N: (numQHeads + numKVHeads * 2) * headDim,  // 7168
+            N: gpt2NumHeads * headDim * 3,  // 3072 = 16*64*3 (Q+K+V for standard MHA)
             K: hiddenSize,
             commandBuffer: commandBuffer
         )
 
-        // 3. Unpack Q/K/V from qkvBuffer [1, 1, 7168]
-        // Q: [0..5120) → qBuffer[80,64]
-        // K: [5120..6144) → kWriteBuffer[16,64]
-        // V: [6144..7168) → vWriteBuffer[16,64]
+        // 3. Unpack Q/K/V from qkvBuffer [1, 1, 3072]
+        // GPT2NoEmbed standard MHA: Q/K/V each 16 heads × 64 dim = 1024 elements
+        // Q: [0..1024) → qBuffer[16,64]
+        // K: [1024..2048) → kWriteBuffer[16,64]
+        // V: [2048..3072) → vWriteBuffer[16,64]
         unpackQKV()
 
         // 4. Apply RoPE to Q and K at current position
@@ -196,16 +214,16 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 7. O projection: o = gemm_nt(attn_out, w_o)
-        // attn_out: [1,1,5120], w_o: [1024,5120] → o: [1,1,1024]
-        // M=1, N=1024, K=5120
+        // 7. O projection: o = gemm_nt(attn_out, c_proj.weight)
+        // attn_out: [1,1,1024], c_proj.weight: [1024, 1024] in ONNX → [1024, 1024] in memory
+        // M=1, N=1024, K=1024
         try runGEMM_NT(
             A: attnOutBuffer,
-            B: weight("h.\(layer).attn.o_proj.weight"),
+            B: weight("h.\(layer).attn.c_proj.weight"),
             C: residualBuffer,
             M: 1,
             N: hiddenSize,
-            K: numQHeads * headDim,
+            K: gpt2NumHeads * headDim,  // 1024 for GPT2NoEmbed
             commandBuffer: commandBuffer
         )
 
@@ -228,12 +246,12 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 10. FFN gate: ffn_interim = gelu(gemm_nt(ln2_out, w1))
-        // ln2_out: [1,1,1024], w1: [4096, 1024] → ffn_interim: [1,1,4096]
+        // 10. FFN gate: ffn_interim = gelu(gemm_nt(ln2_out, c_fc.weight))
+        // ln2_out: [1,1,1024], c_fc.weight: [1024, 4096] in ONNX → [4096, 1024] in memory
         // M=1, N=4096, K=1024
         try runGEMM_NT(
             A: ln2OutBuffer,
-            B: weight("h.\(layer).mlp.gate_proj.weight"),
+            B: weight("h.\(layer).mlp.c_fc.weight"),
             C: ffnInterimBuffer,
             M: 1,
             N: intermediateSize,
@@ -249,12 +267,12 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 12. FFN up: ffn_hidden = gemm_nn(ffn_interim, w3)
-        // ffn_interim: [1,1,4096], w3: [1024, 4096] → ffn_hidden: [1,1,1024]
-        // M=1, N=1024, K=4096 (gemm_nn: C = A @ B, B is [N,K])
-        try runGEMM_NN(
+        // 12. FFN up: ffn_hidden = gemm_nt(ffn_interim, c_proj.weight)
+        // ffn_interim: [1,1,4096], c_proj.weight: [4096, 1024] in ONNX → [1024, 4096] in memory
+        // M=1, N=1024, K=4096 (gemm_nt: C = A @ B^T where B[N,K]=[1024,4096])
+        try runGEMM_NT(
             A: ffnInterimBuffer,
-            B: weight("h.\(layer).mlp.up_proj.weight"),
+            B: weight("h.\(layer).mlp.c_proj.weight"),
             C: ffnOutBuffer,
             M: 1,
             N: hiddenSize,
@@ -290,10 +308,11 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // LM head: logits = gemm_nn(ln_f_out, lm_head)
-        // ln_f_out: [1,1,1024], lm_head: [6563, 1024] → logits: [1,1,6563]
-        // M=1, N=vocabSize, K=hiddenSize (gemm_nn: C = A @ B)
-        try runGEMM_NN(
+        // LM head: logits = gemm_nt(ln_f_out, lm_head.weight)
+        // ln_f_out: [1,1,1024], lm_head.weight: [6563, 1024] in ONNX → [1024, 6563] in memory
+        // gemm_nt: C = A @ B^T where B[N,K]=[6563,1024] → B^T[K,N]=[1024,6563]
+        // M=1, N=vocabSize=6563, K=1024 → result [1, 6563]
+        try runGEMM_NT(
             A: finalLnOutBuffer,
             B: weight("lm_head.weight"),
             C: logitsBuffer,
@@ -438,6 +457,10 @@ public final class MetalLMBackend: LanguageModelBackend {
 
     /// Attention decode step (single position Q with per-layer KV cache).
     /// attention_decode_step kernel: Grid: (80, 64), Threadgroup: (16, 4)
+    /// NOTE: MetalLMBackend attention kernel is designed for GQA (80 Q + 16 KV, ratio=5).
+    /// GPT2NoEmbed uses standard MHA (16 Q + 16 KV, ratio=1). The kernel's
+    /// Q_KV_RATIO=5 mapping (q_head / 5) is incorrect for standard MHA.
+    /// Weight loading is correct; attention kernel needs separate MHA adaptation.
     private func runAttention(
         q: MTLBuffer,
         layer: Int,
@@ -544,29 +567,25 @@ public final class MetalLMBackend: LanguageModelBackend {
 
     // MARK: - QKV Unpacking
 
-    /// Unpack fused qkvBuffer [1, 1, 7168] into Q, K, V write buffers.
-    /// Q: qBuffer [80, 64]
+    /// Unpack fused qkvBuffer [1, 1, 3072] into Q, K, V write buffers.
+    /// GPT2NoEmbed standard MHA: Q/K/V each 16 heads × 64 dim = 1024 elements
+    /// Q: qBuffer [16, 64]
     /// K: kWriteBuffer [16, 64]
     /// V: vWriteBuffer [16, 64]
     private func unpackQKV() {
-        let qkvPtr = qkvBuffer.contents().bindMemory(to: Float16.self, capacity: 7168)
-        let qPtr = qBuffer.contents().bindMemory(to: Float16.self, capacity: 5120)
+        // GPT2NoEmbed: qkv = [1, 1, 3072] = 16*64*3 = Q + K + V
+        // Layout: Q[0..1024), K[1024..2048), V[2048..3072)
+        let qkvPtr = qkvBuffer.contents().bindMemory(to: Float16.self, capacity: 3072)
+        let qPtr = qBuffer.contents().bindMemory(to: Float16.self, capacity: 1024)
         let kPtr = kWriteBuffer.contents().bindMemory(to: Float16.self, capacity: 1024)
         let vPtr = vWriteBuffer.contents().bindMemory(to: Float16.self, capacity: 1024)
 
-        // Layout in qkvBuffer (row 0, consecutive):
-        // Q:   elements [0..5119]     → 80 * 64 = 5120 elements
-        // K:   elements [5120..6143]  → 16 * 64 = 1024 elements
-        // V:   elements [6144..7167]  → 16 * 64 = 1024 elements
-        // Total: 7168 elements
-
-        // Use memcpy for efficiency
-        let qBytes = 5120 * MemoryLayout<Float16>.size
+        let qBytes = 1024 * MemoryLayout<Float16>.size
         let kBytes = 1024 * MemoryLayout<Float16>.size
 
         memcpy(qPtr, qkvPtr, qBytes)
-        memcpy(kPtr, qkvPtr.advanced(by: 5120), kBytes)
-        memcpy(vPtr, qkvPtr.advanced(by: 5120 + 1024), kBytes)
+        memcpy(kPtr, qkvPtr.advanced(by: 1024), kBytes)
+        memcpy(vPtr, qkvPtr.advanced(by: 2048), kBytes)
     }
 
     /// Write K/V write buffers into the KV cache for a specific layer and position.
@@ -583,6 +602,12 @@ public final class MetalLMBackend: LanguageModelBackend {
         memcpy(layerValBuf.contents().advanced(by: byteOffset),
                vWriteBuffer.contents(),
                kStride * MemoryLayout<Float16>.size)
+    }
+
+    // MARK: - Weight Manifest Entry
+
+    private struct WeightManifestEntry: Codable {
+        let fp16: String?
     }
 
     // MARK: - Initialization Helpers
@@ -615,12 +640,17 @@ public final class MetalLMBackend: LanguageModelBackend {
         let fp16 = MemoryLayout<Float16>.size
         let fp32 = MemoryLayout<Float32>.size
 
-        qkvBuffer          = device.makeBuffer(length: 1 * 1 * (numQHeads + numKVHeads * 2) * headDim * fp16, options: .storageModeShared)!
-        qBuffer            = device.makeBuffer(length: numQHeads * headDim * fp16, options: .storageModeShared)!
-        kWriteBuffer       = device.makeBuffer(length: numKVHeads * headDim * fp16, options: .storageModeShared)!
-        vWriteBuffer       = device.makeBuffer(length: numKVHeads * headDim * fp16, options: .storageModeShared)!
+        // GPT2NoEmbed buffer sizes (standard MHA: 16 heads × 64 dim per Q/K/V)
+        // qkvBuffer: [1, 1, 3072] = 16*64*3 = Q+K+V for standard MHA
+        qkvBuffer          = device.makeBuffer(length: 1 * 1 * gpt2NumHeads * headDim * 3 * fp16, options: .storageModeShared)!
+        // qBuffer: [16, 64] = 1024 half (GPT2NoEmbed Q)
+        qBuffer            = device.makeBuffer(length: gpt2NumHeads * headDim * fp16, options: .storageModeShared)!
+        // kWriteBuffer/vWriteBuffer: [16, 64] = 1024 half each (GPT2NoEmbed K/V)
+        kWriteBuffer       = device.makeBuffer(length: gpt2NumHeads * headDim * fp16, options: .storageModeShared)!
+        vWriteBuffer       = device.makeBuffer(length: gpt2NumHeads * headDim * fp16, options: .storageModeShared)!
         // kBuffer/vBuffer: allocated after KVCacheManager creation; placeholder here
-        attnOutBuffer      = device.makeBuffer(length: numQHeads * headDim * fp16, options: .storageModeShared)!
+        // attnOutBuffer: [16, 64] = 1024 half (GPT2NoEmbed attention output)
+        attnOutBuffer      = device.makeBuffer(length: gpt2NumHeads * headDim * fp16, options: .storageModeShared)!
         ln1OutBuffer       = device.makeBuffer(length: hiddenSize * fp16, options: .storageModeShared)!
         residualBuffer     = device.makeBuffer(length: hiddenSize * fp16, options: .storageModeShared)!
         ln2OutBuffer       = device.makeBuffer(length: hiddenSize * fp16, options: .storageModeShared)!
@@ -703,26 +733,24 @@ public final class MetalLMBackend: LanguageModelBackend {
     }
 
     private func loadWeights() throws {
-        // TODO: Load weights from Float16WeightLoader (Task 8).
-        // Placeholder weight names (GPT-2 style, verified from GPT-2 architecture):
-        //
-        // Per-layer (24 layers, h.{layer}.*):
-        //   ln_1.weight       [1024] half — pre-attention LayerNorm gamma
-        //   ln_1.bias         [1024] half — pre-attention LayerNorm beta
-        //   attn.qkv_proj.weight [7168, 1024] half — fused QKV projection
-        //   attn.o_proj.weight   [1024, 5120] half — attention output projection
-        //   ln_2.weight       [1024] half — post-attention LayerNorm gamma
-        //   ln_2.bias         [1024] half — post-attention LayerNorm beta
-        //   mlp.gate_proj.weight [4096, 1024] half — FFN gate (w1)
-        //   mlp.up_proj.weight   [1024, 4096] half — FFN up projection (w3)
-        //
-        // Root-level:
-        //   ln_f.weight       [1024] half — final LayerNorm gamma
-        //   ln_f.bias         [1024] half — final LayerNorm beta
-        //   lm_head.weight    [6563, 1024] half — language model head
-        //
-        // Float16WeightLoader (Task 8) will handle the actual ONNX tensor
-        // name → MTLBuffer mapping based on the Task 1 ONNX export.
+        // Load weights from weights_manifest.json
+        // GPT2NoEmbed uses standard MHA (16 heads × 64 = 1024 per Q/K/V)
+        // with matmul convention: ONNX stores [out_dim, in_dim], gemm_nt is C = A @ B^T
+        let manifestPath = weightsDir.appendingPathComponent("weights_manifest.json")
+        let manifestData = try Data(contentsOf: manifestPath)
+        let manifest = try JSONDecoder().decode([String: WeightManifestEntry].self, from: manifestData)
+
+        for (name, entry) in manifest {
+            guard let fp16File = entry.fp16 else { continue }
+            let fp16Data = try Data(contentsOf: weightsDir.appendingPathComponent(fp16File))
+            let fp16Buf = fp16Data.withUnsafeBytes { ptr in
+                device.makeBuffer(bytes: ptr.baseAddress!, length: fp16Data.count, options: .storageModeShared)!
+            }
+            weightBuffers[name] = fp16Buf
+        }
+
+        // Note: c_attn.bias [3072] and c_proj.bias [1024] are loaded into weightBuffers
+        // but not yet applied in forwardLayer. Bias application is a future enhancement.
     }
 
     // MARK: - Weight Access
