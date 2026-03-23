@@ -1,5 +1,5 @@
 import Foundation
-import Metal
+@preconcurrency import Metal
 
 // MARK: - MetalLMBackend
 
@@ -8,7 +8,7 @@ import Metal
 ///
 /// Architecture per layer:
 ///   hidden → preLN → QKV_proj → RoPE → Attention → O_proj → residual_add → postLN → FFN → residual_add → hidden
-public final class MetalLMBackend: LanguageModelBackend {
+public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
 
     // MARK: - Metal Objects
 
@@ -196,7 +196,6 @@ public final class MetalLMBackend: LanguageModelBackend {
             gemmEnc.setBytes(&m, length: MemoryLayout<UInt32>.size, index: 3)
             gemmEnc.setBytes(&n, length: MemoryLayout<UInt32>.size, index: 4)
             gemmEnc.setBytes(&k, length: MemoryLayout<UInt32>.size, index: 5)
-            let tgW: Int32 = 16, tgH: Int32 = 16
             let ntgX = (3072 + 15) / 16
             let ntgY = (1 + 15) / 16
             let tgSz = MTLSize(width: 16, height: 16, depth: 1)
@@ -885,9 +884,10 @@ public final class MetalLMBackend: LanguageModelBackend {
         enc.setBytes(&seqLen, length: MemoryLayout<UInt32>.size, index: 1)
 
         let totalThreads = maxSeqLen * maxSeqLen
-        let threadsPerGroup = MTLSize(width: 1024, height: 1, depth: 1)
+        // iOS GPU max threadsPerThreadgroup = 512; use 512 for the 2D mask
+        let threadsPerGroup = MTLSize(width: 512, height: 1, depth: 1)
         let numThreadGroups = MTLSize(
-            width: (totalThreads + 1023) / 1024,
+            width: (totalThreads + 511) / 512,
             height: 1, depth: 1
         )
         enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)

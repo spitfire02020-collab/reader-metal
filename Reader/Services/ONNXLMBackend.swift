@@ -1,6 +1,6 @@
 import Foundation
 import Metal
-import OnnxRuntimeBindings
+@preconcurrency import OnnxRuntimeBindings
 
 // MARK: - ONNX Language Model Backend
 
@@ -13,7 +13,7 @@ import OnnxRuntimeBindings
 ///
 /// The full decode loop (token generation, repetition penalty, STOP_SPEECH detection)
 /// stays in ChatterboxEngine; ONNXLMBackend only handles the single-step inference.
-final class ONNXLMBackend: LanguageModelBackend {
+final class ONNXLMBackend: LanguageModelBackend, @unchecked Sendable {
 
     // MARK: - Properties
 
@@ -147,7 +147,7 @@ final class ONNXLMBackend: LanguageModelBackend {
         commandBuffer: MTLCommandBuffer
     ) throws -> MTLBuffer {
         guard isInitialized else { throw LMBackendError.notInitialized }
-        guard let dev = device, let logitsBuf = logitsOutputBuffer else {
+        guard let logitsBuf = logitsOutputBuffer else {
             throw LMBackendError.notInitialized
         }
 
@@ -353,7 +353,7 @@ final class ONNXLMBackend: LanguageModelBackend {
         }
 
         let rawData = try ortValue.tensorData() as Data
-        rawData.withUnsafeBytes { ptr in
+        _ = rawData.withUnsafeBytes { ptr in
             memcpy(buffer.contents(), ptr.baseAddress!, byteCount)
         }
 

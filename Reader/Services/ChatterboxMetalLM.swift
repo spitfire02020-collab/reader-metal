@@ -1,5 +1,5 @@
 import Foundation
-import Metal
+@preconcurrency import Metal
 
 /// High-level Metal language model wrapper — conforms to LanguageModelBackend.
 ///
@@ -12,7 +12,7 @@ import Metal
 ///   2. Extend buffer with START_SPEECH tokens for the max decode length
 ///   3. Run prefill step to populate KV cache at position 0
 ///   4. Decode loop: greedy argmax → STOP_SPEECH → return generated tokens
-public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
+public final class ChatterboxMetalLM: LanguageModelBackend, @unchecked Sendable {
 
     // MARK: - Properties
 
@@ -184,7 +184,6 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
 
         let condLen = conditioning.count / hidden
         let textLen = textEmbed.count / hidden
-        let fp16 = MemoryLayout<Float16>.size
 
         // Pointer to concatBuf as float16
         let concatPtr16 = concatBuf.contents().bindMemory(to: Float16.self, capacity: (maxSeq + 1) * hidden)

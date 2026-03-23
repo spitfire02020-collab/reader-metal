@@ -11,7 +11,7 @@ import Metal
 ///   - Each step processes the growing full prefix [conditioning | text | speech_tokens_so_far]
 ///   - KV cache accumulates across steps for efficient attention
 ///   - Greedy decoding: argmax + repetition penalty (penalty > 1.0 discourages repeats)
-public final class MetalPipeline: LanguageModelBackend, Sendable {
+public final class MetalPipeline: LanguageModelBackend, @unchecked Sendable {
 
     // MARK: - Properties
 
@@ -178,10 +178,10 @@ public final class MetalPipeline: LanguageModelBackend, Sendable {
             commandBuffer: cmd
         )
         cmd.commit()
-        cmd.waitUntilCompleted()
+        _ = await cmd.completed()
 
         // Decode loop
-        for step in 0..<maxNewTokens {
+        for _ in 0..<maxNewTokens {
             // Extract logits for the last position (from previous forward pass)
             extractLogits(from: logitsBuf, to: &logitsScratch)
 
@@ -277,7 +277,7 @@ public final class MetalPipeline: LanguageModelBackend, Sendable {
         )
 
         cmd.commit()
-        cmd.waitUntilCompleted()
+        _ = await cmd.completed()
 
         // Extract logits
         let logitsPtr = logitsBuf.contents().bindMemory(

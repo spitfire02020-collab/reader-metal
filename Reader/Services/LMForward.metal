@@ -22,16 +22,16 @@
 //   for layer in 0..<24:
 //       hidden = lm_layer_forward(hidden, layer_idx=layer)
 //
-// Constants
-constant int NUM_LAYERS     = 24;
-constant int NUM_Q_HEADS    = 16;   // GPT-2 NoEmbed standard MHA
-constant int NUM_KV_HEADS  = 16;
-constant int HEAD_DIM       = 64;
-constant int HIDDEN_SIZE    = 1024; // n_embd
-constant int INTERMEDIATE   = 4096; // n_inner (gelu intermediate)
-constant int VOCAB_SIZE     = 6563;
-constant int MAX_SEQ_LEN    = 1500;
-constant int QKV_PROJ_OUT   = (NUM_Q_HEADS + NUM_KV_HEADS * 2) * HEAD_DIM; // 16+32=48 heads × 64 = 3072
+// Constants (GPT2NoEmbed spec — not all used in RoPE kernel but kept for reference)
+// constant int NUM_LAYERS     = 24;
+// constant int NUM_Q_HEADS    = 16;   // GPT-2 NoEmbed standard MHA
+// constant int NUM_KV_HEADS  = 16;
+// constant int HEAD_DIM       = 64;
+// constant int HIDDEN_SIZE    = 1024; // n_embd
+// constant int INTERMEDIATE   = 4096; // n_inner (gelu intermediate)
+// constant int VOCAB_SIZE     = 6563;
+// constant int MAX_SEQ_LEN    = 1500;
+// constant int QKV_PROJ_OUT   = (NUM_Q_HEADS + NUM_KV_HEADS * 2) * HEAD_DIM; // 16+32=48 heads × 64 = 3072
 
 // MARK: - RoPE Apply Kernel
 
