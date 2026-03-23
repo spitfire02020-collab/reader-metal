@@ -40,6 +40,10 @@ kernel void dequant_q4f16(
 // Dispatch: numThreadGroups=(1,1,1), threadsPerThreadgroup=(256,1,1)
 // Each thread processes dim/256 elements in a strided loop.
 // All threads ALWAYS participate in barriers (no early-exit before barrier).
+//
+// CRITICAL: Accumulation uses float (float32) to avoid float16 overflow.
+// Per-thread x² sums (e.g. 1²+257²+513²+769² ≈ 943,000) exceed float16's
+// max (~65,504), causing infinity overflow → NaN. float32 handles up to 3.4e38.
 kernel void layer_norm(
     device const half*  input  [[buffer(0)]],
     device const half*  gamma  [[buffer(1)]],  // weight [dim]
@@ -51,28 +55,26 @@ kernel void layer_norm(
     uint numThreads = 256;
     uint elemsPerThread = dim / numThreads;  // 4 for dim=1024
 
-    // Per-thread partial sum over this thread's slice
-    half threadSum = 0;
-    half threadSqSum = 0;
+    // Per-thread partial sum in float to prevent float16 overflow
+    // (max x² sum ≈ 4*1024² ≈ 4.2M, well within float32 range)
+    float threadSum = 0;
+    float threadSqSum = 0;
     for (uint k = 0; k < elemsPerThread; k++) {
         uint idx = tid + k * numThreads;
-        half val = input[idx];
+        float val = float(input[idx]);
         threadSum += val;
         threadSqSum += val * val;
     }
 
-    // Reduction tree in threadgroup shared memory
-    threadgroup half sbuf[256];
-    threadgroup half sqbuf[256];
-    sbuf[tid] = threadSum;
-    sqbuf[tid] = threadSqSum;
-
-    // Tree-reduction: 256 → 128 → 64 → 32 → 16 → 8 → 4 → 2 → 1
-    // All threads hit every barrier (no early exit before any barrier)
+    // Reduction tree in threadgroup shared memory (float32)
+    threadgroup float sbuf[256];
+    threadgroup float sqbuf[256];
     sbuf[tid] = threadSum;
     sqbuf[tid] = threadSqSum;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
+    // Tree-reduction: 256 → 128 → 64 → 32 → 16 → 8 → 4 → 2 → 1
+    // Threads 128-255 skip the if() body but reach every barrier.
     if (tid < 128) { sbuf[tid] += sbuf[tid + 128]; sqbuf[tid] += sqbuf[tid + 128]; }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (tid < 64) { sbuf[tid] += sbuf[tid + 64]; sqbuf[tid] += sqbuf[tid + 64]; }
@@ -91,17 +93,17 @@ kernel void layer_norm(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // sbuf[0] = sum, sqbuf[0] = sum of squares
-    half sum = sbuf[0];
-    half sq_sum = sqbuf[0];
-    half mean = sum / half(dim);
-    half var = sq_sum / half(dim) - mean * mean;
-    half inv_std = metal::rsqrt(var + eps);
+    float sum = sbuf[0];
+    float sq_sum = sqbuf[0];
+    float mean = sum / float(dim);
+    float var = sq_sum / float(dim) - mean * mean;
+    float inv_std = metal::rsqrt(var + float(eps));
 
-    // Each thread normalizes and writes its slice
+    // Each thread normalizes and writes its slice (convert back to half)
     for (uint k = 0; k < elemsPerThread; k++) {
         uint idx = tid + k * numThreads;
-        half x = input[idx];
-        half norm = (x - mean) * inv_std;
-        output[idx] = norm * gamma[idx] + beta[idx];
+        float x = float(input[idx]);
+        float norm = (x - mean) * inv_std;
+        output[idx] = half(norm * float(gamma[idx]) + float(beta[idx]));
     }
 }
