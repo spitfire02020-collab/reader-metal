@@ -127,6 +127,96 @@ public final class MetalLMBackend: LanguageModelBackend {
         // Note: kBuffer/vBuffer here are scratch/placeholder.
         // The actual per-layer K/V cache is accessed via kvCache.buffer(layer, isKey) in each forward call.
         self.kBuffer = kvCache.buffer(for: 0, isKey: true)
+
+        // DIAGNOSTIC TEST: Run LayerNorm in isolation with known input
+        do {
+            NSLog("[MetalLMBackend] TEST: Running LayerNorm isolation test...")
+            // Fill input buffer with known values: [1.0, 2.0, 3.0, ..., 1024.0]
+            let testInputBuf = device.makeBuffer(length: hiddenSize * MemoryLayout<Float16>.size, options: .storageModeShared)!
+            let testOutputBuf = device.makeBuffer(length: hiddenSize * MemoryLayout<Float16>.size, options: .storageModeShared)!
+            let testPtr = testInputBuf.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
+            for i in 0..<hiddenSize {
+                testPtr[i] = Float16(Float(i + 1))  // 1.0, 2.0, ..., 1024.0
+            }
+            // Use ln_f weights for the test (already loaded)
+            let lnW = try weight("ln_f.weight")
+            let lnB = try weight("ln_f.bias")
+
+            guard let testCmd = commandQueue.makeCommandBuffer(),
+                  let testEnc = testCmd.makeComputeCommandEncoder() else {
+                NSLog("[MetalLMBackend] TEST: FAILED to create command buffer")
+                throw MetalLMError.commandBufferFailed
+            }
+            testEnc.setComputePipelineState(layerNormPipeline)
+            testEnc.setBuffer(testInputBuf, offset: 0, index: 0)
+            testEnc.setBuffer(lnW, offset: 0, index: 1)
+            testEnc.setBuffer(lnB, offset: 0, index: 2)
+            testEnc.setBuffer(testOutputBuf, offset: 0, index: 3)
+            var d = UInt32(hiddenSize)
+            var eps: Float16 = Float16(1e-5)
+            testEnc.setBytes(&d, length: MemoryLayout<UInt32>.size, index: 4)
+            testEnc.setBytes(&eps, length: MemoryLayout<Float16>.size, index: 5)
+            let tg = MTLSize(width: 256, height: 1, depth: 1)
+            let ntg = MTLSize(width: 1, height: 1, depth: 1)
+            testEnc.dispatchThreadgroups(ntg, threadsPerThreadgroup: tg)
+            testEnc.endEncoding()
+            testCmd.commit()
+            testCmd.waitUntilCompleted()
+
+            // Check output
+            let outPtr = testOutputBuf.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
+            var outAbsmax: Float = 0
+            var outSample0: Float = 0
+            for i in 0..<hiddenSize {
+                let v = abs(Float(outPtr[i]))
+                if v > outAbsmax { outAbsmax = v }
+                if i < 3 { outSample0 = v }
+            }
+            NSLog("[MetalLMBackend] TEST: LayerNorm output absmax=%.4f sample0=%.4f (expected absmax ~0.1-2 for normalized output)", outAbsmax, outSample0)
+
+            // Test GEMM_NT in isolation: A=[1,1024] @ B^T=[1024,3072] → C=[1,3072]
+            NSLog("[MetalLMBackend] TEST: Running GEMM_NT isolation test...")
+            let testAbuf = device.makeBuffer(length: hiddenSize * MemoryLayout<Float16>.size, options: .storageModeShared)!
+            let testCbuf = device.makeBuffer(length: gpt2NumHeads * headDim * 3 * MemoryLayout<Float16>.size, options: .storageModeShared)!
+            let testAptr = testAbuf.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
+            for i in 0..<hiddenSize {
+                testAptr[i] = Float16(1.0)  // All ones
+            }
+            let cAttnW = try weight("h.0.attn.c_attn.weight")
+            guard let gemmCmd = commandQueue.makeCommandBuffer(),
+                  let gemmEnc = gemmCmd.makeComputeCommandEncoder() else {
+                NSLog("[MetalLMBackend] TEST: GEMM FAILED to create command buffer")
+                throw MetalLMError.commandBufferFailed
+            }
+            gemmEnc.setComputePipelineState(gemmNTPipeline)
+            gemmEnc.setBuffer(testAbuf, offset: 0, index: 0)
+            gemmEnc.setBuffer(cAttnW, offset: 0, index: 1)
+            gemmEnc.setBuffer(testCbuf, offset: 0, index: 2)
+            var m: UInt32 = 1, n: UInt32 = 3072, k: UInt32 = 1024
+            gemmEnc.setBytes(&m, length: MemoryLayout<UInt32>.size, index: 3)
+            gemmEnc.setBytes(&n, length: MemoryLayout<UInt32>.size, index: 4)
+            gemmEnc.setBytes(&k, length: MemoryLayout<UInt32>.size, index: 5)
+            let tgW: Int32 = 16, tgH: Int32 = 16
+            let ntgX = (3072 + 15) / 16
+            let ntgY = (1 + 15) / 16
+            let tgSz = MTLSize(width: 16, height: 16, depth: 1)
+            let ntgSz = MTLSize(width: ntgX, height: ntgY, depth: 1)
+            gemmEnc.dispatchThreadgroups(ntgSz, threadsPerThreadgroup: tgSz)
+            gemmEnc.endEncoding()
+            gemmCmd.commit()
+            gemmCmd.waitUntilCompleted()
+
+            let cPtr = testCbuf.contents().bindMemory(to: Float16.self, capacity: 3072)
+            var cAbsmax: Float = 0
+            for i in 0..<3072 {
+                let v = abs(Float(cPtr[i]))
+                if v > cAbsmax { cAbsmax = v }
+            }
+            NSLog("[MetalLMBackend] TEST: GEMM_NT output absmax=%.4f (expected ~0.1-10)", cAbsmax)
+
+        } catch {
+            NSLog("[MetalLMBackend] TEST: FAILED with error: \(error)")
+        }
         self.vBuffer = kvCache.buffer(for: 0, isKey: false)
         // This is a simplification — the real implementation uses kvCache.buffer(layer, isKey).
     }
@@ -156,6 +246,31 @@ public final class MetalLMBackend: LanguageModelBackend {
         await kvCache.reset()
     }
 
+    /// Return the absmax of the last layer's hidden state (residualBuffer).
+    /// Uses a fresh command buffer — safe to call after any committed+waited pass.
+    public func getLastHiddenStateAbsmax() -> Float {
+        guard let cmd = commandQueue.makeCommandBuffer(),
+              let enc = cmd.makeComputeCommandEncoder() else { return 0 }
+        // No-op kernel just to force GPU sync and make buffer contents visible
+        enc.setComputePipelineState(residualAddPipeline)
+        enc.setBuffer(residualBuffer, offset: 0, index: 0)
+        enc.setBuffer(residualBuffer, offset: 0, index: 1)
+        enc.setBuffer(residualBuffer, offset: 0, index: 2)
+        var s = UInt32(hiddenSize)
+        enc.setBytes(&s, length: MemoryLayout<UInt32>.size, index: 3)
+        enc.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        let hPtr = residualBuffer.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
+        var absmax: Float = 0
+        for i in 0..<hiddenSize {
+            let v = abs(Float(hPtr[i]))
+            if v > absmax { absmax = v }
+        }
+        return absmax
+    }
+
     // MARK: - Per-Layer Forward
 
     /// Runs one transformer layer's computation.
@@ -179,27 +294,20 @@ public final class MetalLMBackend: LanguageModelBackend {
         )
 
         // 2. QKV projection: qkv = gemm_nt(ln1_out, c_attn.weight)
-        // ln1_out: [1,1,1024], c_attn.weight: [1024, 3072] in ONNX → [3072, 1024] in memory
-        // gemm_nt: C = A @ B^T, A[M,K], B[N,K] row-major → C[M,N]
-        // M=1, N=3072 (16*64*3 for standard MHA), K=1024
         try runGEMM_NT(
             A: ln1OutBuffer,
             B: weight("h.\(layer).attn.c_attn.weight"),
             C: qkvBuffer,
             M: 1,
-            N: gpt2NumHeads * headDim * 3,  // 3072 = 16*64*3 (Q+K+V for standard MHA)
+            N: gpt2NumHeads * headDim * 3,
             K: hiddenSize,
             commandBuffer: commandBuffer
         )
 
         // 3. Unpack Q/K/V from qkvBuffer [1, 1, 3072]
-        // GPT2NoEmbed standard MHA: Q/K/V each 16 heads × 64 dim = 1024 elements
-        // Q: [0..1024) → qBuffer[16,64]
-        // K: [1024..2048) → kWriteBuffer[16,64]
-        // V: [2048..3072) → vWriteBuffer[16,64]
         unpackQKV()
 
-        // 4. Apply RoPE to Q and K at current position
+        // 4. Apply RoPE to Q and K
         try applyRoPELayer(
             layer: layer,
             q: qBuffer,
@@ -208,10 +316,10 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 5. Write K/V to KV cache at kvWriteOffset for this layer
+        // 5. Write K/V to KV cache
         writeKVPairs(layer: layer, kvWriteOffset: kvWriteOffset)
 
-        // 6. Attention: attn_out = attention_decode_step(q, k_cache, v_cache, kvReadLength)
+        // 6. Attention
         try runAttention(
             q: qBuffer,
             layer: layer,
@@ -219,20 +327,18 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 7. O projection: o = gemm_nt(attn_out, c_proj.weight)
-        // attn_out: [1,1,1024], c_proj.weight: [1024, 1024] in ONNX → [1024, 1024] in memory
-        // M=1, N=1024, K=1024
+        // 7. O projection
         try runGEMM_NT(
             A: attnOutBuffer,
             B: weight("h.\(layer).attn.c_proj.weight"),
             C: residualBuffer,
             M: 1,
             N: hiddenSize,
-            K: gpt2NumHeads * headDim,  // 1024 for GPT2NoEmbed
+            K: gpt2NumHeads * headDim,
             commandBuffer: commandBuffer
         )
 
-        // 8. Residual add: residual = hidden + o → stored in residualBuffer
+        // 8. Residual add: residual = hidden + o
         try runResidualAdd(
             a: hidden,
             b: residualBuffer,
@@ -241,7 +347,7 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 9. Post-LayerNorm: ln2_out = LayerNorm(residual, ln2_w, ln2_b)
+        // 9. Post-LayerNorm
         try runLayerNorm(
             input: residualBuffer,
             gamma: weight("h.\(layer).ln_2.weight"),
@@ -251,9 +357,7 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 10. FFN gate: ffn_interim = gelu(gemm_nt(ln2_out, c_fc.weight))
-        // ln2_out: [1,1,1024], c_fc.weight: [1024, 4096] in ONNX → [4096, 1024] in memory
-        // M=1, N=4096, K=1024
+        // 10. FFN gate + GELU
         try runGEMM_NT(
             A: ln2OutBuffer,
             B: weight("h.\(layer).mlp.c_fc.weight"),
@@ -263,8 +367,6 @@ public final class MetalLMBackend: LanguageModelBackend {
             K: hiddenSize,
             commandBuffer: commandBuffer
         )
-
-        // 11. GELU activation (in-place on ffnInterimBuffer)
         try runTanhGelu(
             input: ffnInterimBuffer,
             output: ffnInterimBuffer,
@@ -272,9 +374,7 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 12. FFN up: ffn_hidden = gemm_nt(ffn_interim, c_proj.weight)
-        // ffn_interim: [1,1,4096], c_proj.weight: [4096, 1024] in ONNX → [1024, 4096] in memory
-        // M=1, N=1024, K=4096 (gemm_nt: C = A @ B^T where B[N,K]=[1024,4096])
+        // 11. FFN up projection
         try runGEMM_NT(
             A: ffnInterimBuffer,
             B: weight("h.\(layer).mlp.c_proj.weight"),
@@ -285,7 +385,7 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
-        // 13. Residual add: hidden = residual + ffn_hidden → residualBuffer (in-place)
+        // 12. Residual add: hidden = residual + ffn_hidden
         try runResidualAdd(
             a: residualBuffer,
             b: ffnOutBuffer,
@@ -299,11 +399,22 @@ public final class MetalLMBackend: LanguageModelBackend {
 
     /// Final forward: LayerNorm + LM head → logits
     /// hidden: [1, 1, 1024] half → returns logits [vocabSize] float32
+    /// NOTE: Caller must commit+wait the commandBuffer AFTER this returns
+    ///       before reading the logits buffer.
     public func finalForward(
         hidden: MTLBuffer,
         commandBuffer: MTLCommandBuffer
     ) throws -> MTLBuffer {
-        // Final LayerNorm
+        // Read lm_head weight stats directly (CPU-side, no GPU sync needed)
+        let lmBuf = try weight("lm_head.weight")
+        let lmPtr = lmBuf.contents().bindMemory(to: Float16.self, capacity: vocabSize * hiddenSize)
+        var lmMaxF: Float = 0
+        for i in 0..<(vocabSize * hiddenSize) {
+            let v = abs(Float(lmPtr[i]))
+            if v > lmMaxF { lmMaxF = v }
+        }
+
+        // Final LayerNorm (encoded into caller's commandBuffer)
         try runLayerNorm(
             input: hidden,
             gamma: weight("ln_f.weight"),
@@ -314,12 +425,10 @@ public final class MetalLMBackend: LanguageModelBackend {
         )
 
         // LM head: logits = gemm_nt(ln_f_out, lm_head.weight)
-        // ln_f_out: [1,1,1024], lm_head.weight: [6563, 1024] in ONNX → [1024, 6563] in memory
-        // gemm_nt: C = A @ B^T where B[N,K]=[6563,1024] → B^T[K,N]=[1024,6563]
-        // M=1, N=vocabSize=6563, K=1024 → result [1, 6563]
+        // Encoded on the SAME caller's commandBuffer (no sync here — caller manages commit+wait)
         try runGEMM_NT(
             A: finalLnOutBuffer,
-            B: weight("lm_head.weight"),
+            B: lmBuf,
             C: logitsBuffer,
             M: 1,
             N: vocabSize,
@@ -327,7 +436,44 @@ public final class MetalLMBackend: LanguageModelBackend {
             commandBuffer: commandBuffer
         )
 
+        // NOTE: GPU sync (commit+wait) is caller's responsibility after forward() returns.
+        // We do NOT sync here so the caller can chain multiple forwards on the same buffer.
+        // The hidden, finalLnOut, and logitsBuffer will have valid contents after commit+wait.
+
         return logitsBuffer
+    }
+
+    /// Inspect final hidden state and logits after a committed+waited forward pass.
+    /// MUST be called after the command buffer has been committed and waited.
+    /// This reads GPU buffer contents on the CPU — safe to call multiple times.
+    public func inspectFinalState(
+        hidden: MTLBuffer,
+        logitsBuf: MTLBuffer
+    ) {
+        // hidden: last layer output (residualBuffer)
+        let hiddenPtr = hidden.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
+        var hiddenMaxF: Float = 0
+        for i in 0..<hiddenSize {
+            let v = abs(Float(hiddenPtr[i]))
+            if v > hiddenMaxF { hiddenMaxF = v }
+        }
+
+        // ln_f output (finalLnOutBuffer — output of final LayerNorm)
+        let lnOutPtr = finalLnOutBuffer.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
+        var lnOutMaxF: Float = 0
+        for i in 0..<hiddenSize {
+            let v = abs(Float(lnOutPtr[i]))
+            if v > lnOutMaxF { lnOutMaxF = v }
+        }
+
+        // logits
+        let logitsPtr = logitsBuf.contents().bindMemory(to: Float.self, capacity: vocabSize)
+        var logitsMaxF: Float = 0
+        for i in 0..<vocabSize {
+            let v = abs(logitsPtr[i])
+            if v > logitsMaxF { logitsMaxF = v }
+        }
+        NSLog("[MetalLMBackend] inspect: hidden absmax=%.6f, ln_f absmax=%.6f, logits absmax=%.6f", hiddenMaxF, lnOutMaxF, logitsMaxF)
     }
 
     // MARK: - Kernel Dispatch Helpers
@@ -430,7 +576,8 @@ public final class MetalLMBackend: LanguageModelBackend {
         enc.setBytes(&d, length: MemoryLayout<UInt32>.size, index: 4)
         enc.setBytes(&eps, length: MemoryLayout<Float16>.size, index: 5)
 
-        // layer_norm: grid.y = batch_size. We use batch=1
+        // layer_norm: 256 threads × 4 elements/thread = 1024 (dim)
+        // Parallel reduction in threadgroup memory for mean/variance
         let threadsPerGroup = MTLSize(width: 256, height: 1, depth: 1)
         let numThreadGroups = MTLSize(width: 1, height: 1, depth: 1)
         enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)
@@ -768,6 +915,28 @@ public final class MetalLMBackend: LanguageModelBackend {
                 device.makeBuffer(bytes: ptr.baseAddress!, length: fp16Data.count, options: .storageModeShared)!
             }
             weightBuffers[name] = fp16Buf
+        }
+
+        // DIAGNOSTIC: Verify key weights are non-zero
+        let keyWeights = ["ln_f.weight", "ln_f.bias", "lm_head.weight",
+                          "h.0.ln_1.weight", "h.0.ln_1.bias",
+                          "h.0.attn.c_attn.weight", "h.0.attn.c_proj.weight",
+                          "h.0.mlp.c_fc.weight", "h.0.mlp.c_proj.weight"]
+        for name in keyWeights {
+            if let buf = weightBuffers[name] {
+                let ptr = buf.contents().bindMemory(to: Float16.self, capacity: buf.length / MemoryLayout<Float16>.size)
+                let count = buf.length / MemoryLayout<Float16>.size
+                var absmax: Float = 0
+                var sample0: Float = 0
+                for i in 0..<count {
+                    let v = abs(Float(ptr[i]))
+                    if v > absmax { absmax = v }
+                    if i < 3 { sample0 = v }
+                }
+                NSLog("[MetalLMBackend] loadWeights: %@ absmax=%.4f sample0=%.4f count=%d", name, absmax, sample0, count)
+            } else {
+                NSLog("[MetalLMBackend] loadWeights: %@ NOT FOUND", name)
+            }
         }
 
         // Note: c_attn.bias [3072] and c_proj.bias [1024] are loaded into weightBuffers

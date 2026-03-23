@@ -225,6 +225,10 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
         prefillCmd.commit()
         prefillCmd.waitUntilCompleted()
 
+        // Inspect GPU state after prefill (hidden state and logits after commit+wait)
+        let hiddenAbxmax = pipeline.getLastHiddenStateAbsmax()
+        NSLog("[ChatterboxMetalLM] generate: post-prefill hidden absmax=%.6f", hiddenAbxmax)
+
         // Log prefill logits
         let prefillLogitsPtr = prefillLogitsBuf.contents().bindMemory(to: Float.self, capacity: vocabSize)
         var prefillMaxVal = prefillLogitsPtr[0]
@@ -259,6 +263,12 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
             cmd.commit()
             cmd.waitUntilCompleted()
 
+            // Inspect hidden state after this decode step
+            if step < 2 {
+                let hAbsmax = pipeline.getLastHiddenStateAbsmax()
+                NSLog("[ChatterboxMetalLM] generate: step=\(step) post-forward hidden absmax=%.6f", hAbsmax)
+            }
+
             // Copy logits to scratch
             let logitsPtr = logitsBuf.contents().bindMemory(to: Float.self, capacity: vocabSize)
             if step < 3 {
@@ -270,7 +280,9 @@ public final class ChatterboxMetalLM: LanguageModelBackend, Sendable {
                         maxIdx = i
                     }
                 }
-                NSLog("[ChatterboxMetalLM] generate: step=\(step) logits max=\(maxVal), argmax=\(maxIdx), logits[0]=\(logitsPtr[0]), logits[6561]=\(logitsPtr[6561])")
+                // Also check raw bytes to detect NaN/inf
+                let raw0 = logitsPtr[0]
+                NSLog("[ChatterboxMetalLM] generate: step=\(step) logits max=\(maxVal), argmax=\(maxIdx), logits[0]=\(raw0), isNaN=\(raw0.isNaN), isInf=\(raw0.isInfinite), logits[6561]=\(logitsPtr[6561])")
             }
             for i in 0..<vocabSize {
                 logitsScratch[i] = logitsPtr[i]

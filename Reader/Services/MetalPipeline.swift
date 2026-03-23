@@ -127,6 +127,18 @@ public final class MetalPipeline: LanguageModelBackend, Sendable {
         currentSeqLen = 0
     }
 
+    /// Return the absmax of the last hidden state from MetalLMBackend's residual buffer.
+    /// Safe to call after commit+wait.
+    public func getLastHiddenStateAbsmax() -> Float {
+        backend.getLastHiddenStateAbsmax()
+    }
+
+    /// Inspect the final hidden state and logits from the last forward pass.
+    /// Must be called after commit+wait on the command buffer used for the forward pass.
+    public func inspectFinalState(hidden: MTLBuffer, logitsBuf: MTLBuffer) {
+        backend.inspectFinalState(hidden: hidden, logitsBuf: logitsBuf)
+    }
+
     // MARK: - Decode Loop
 
     /// Main decode entrypoint — generates speech tokens autoregressively.
