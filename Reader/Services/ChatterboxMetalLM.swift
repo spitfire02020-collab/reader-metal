@@ -228,16 +228,17 @@ public final class ChatterboxMetalLM: LanguageModelBackend, @unchecked Sendable 
         NSLog("[ChatterboxMetalLM] generate: post-prefill hidden absmax=%.6f", hiddenAbxmax)
 
         // Log prefill logits
-        let prefillLogitsPtr = prefillLogitsBuf.contents().bindMemory(to: Float.self, capacity: vocabSize)
-        var prefillMaxVal = prefillLogitsPtr[0]
+        let prefillLogitsPtr16 = prefillLogitsBuf.contents().bindMemory(to: UInt16.self, capacity: vocabSize)
+        var prefillMaxVal: Float = 0
         var prefillMaxIdx = 0
-        for i in 1..<vocabSize {
-            if prefillLogitsPtr[i] > prefillMaxVal {
-                prefillMaxVal = prefillLogitsPtr[i]
+        for i in 0..<vocabSize {
+            let v = float16ToFloat32(prefillLogitsPtr16[i])
+            if v > prefillMaxVal {
+                prefillMaxVal = v
                 prefillMaxIdx = i
             }
         }
-        NSLog("[ChatterboxMetalLM] generate: prefill logits max=\(prefillMaxVal), argmax=\(prefillMaxIdx), logits[0]=\(prefillLogitsPtr[0]), logits[6561]=\(prefillLogitsPtr[6561]), logits[6562]=\(prefillLogitsPtr[6562])")
+        NSLog("[ChatterboxMetalLM] generate: prefill logits max=\(prefillMaxVal), argmax=\(prefillMaxIdx), logits[0]=\(float16ToFloat32(prefillLogitsPtr16[0])), logits[6561]=\(float16ToFloat32(prefillLogitsPtr16[6561])), logits[6562]=\(float16ToFloat32(prefillLogitsPtr16[6562]))")
         NSLog("[ChatterboxMetalLM] generate: prefill done, currentSeqLen=\(currentSeqLen)")
 
         // Decode loop
@@ -267,23 +268,24 @@ public final class ChatterboxMetalLM: LanguageModelBackend, @unchecked Sendable 
                 NSLog("[ChatterboxMetalLM] generate: step=\(step) post-forward hidden absmax=%.6f", hAbsmax)
             }
 
-            // Copy logits to scratch
-            let logitsPtr = logitsBuf.contents().bindMemory(to: Float.self, capacity: vocabSize)
+            // Copy logits to scratch (logitsBuffer is Float16 half)
+            let logitsPtr16 = logitsBuf.contents().bindMemory(to: UInt16.self, capacity: vocabSize)
             if step < 3 {
-                var maxVal = logitsPtr[0]
+                var maxVal: Float = 0
                 var maxIdx = 0
-                for i in 1..<vocabSize {
-                    if logitsPtr[i] > maxVal {
-                        maxVal = logitsPtr[i]
+                for i in 0..<vocabSize {
+                    let v = float16ToFloat32(logitsPtr16[i])
+                    if v > maxVal {
+                        maxVal = v
                         maxIdx = i
                     }
                 }
                 // Also check raw bytes to detect NaN/inf
-                let raw0 = logitsPtr[0]
-                NSLog("[ChatterboxMetalLM] generate: step=\(step) logits max=\(maxVal), argmax=\(maxIdx), logits[0]=\(raw0), isNaN=\(raw0.isNaN), isInf=\(raw0.isInfinite), logits[6561]=\(logitsPtr[6561])")
+                let raw0 = float16ToFloat32(logitsPtr16[0])
+                NSLog("[ChatterboxMetalLM] generate: step=\(step) logits max=\(maxVal), argmax=\(maxIdx), logits[0]=\(raw0), isNaN=\(raw0.isNaN), isInf=\(raw0.isInfinite), logits[6561]=\(float16ToFloat32(logitsPtr16[6561]))")
             }
             for i in 0..<vocabSize {
-                logitsScratch[i] = logitsPtr[i]
+                logitsScratch[i] = float16ToFloat32(logitsPtr16[i])
             }
 
             // Apply repetition penalty
@@ -338,6 +340,33 @@ public final class ChatterboxMetalLM: LanguageModelBackend, @unchecked Sendable 
         NSLog("[ChatterboxMetalLM] generate: done, \(generatedTokens.count) tokens generated")
 
         return generatedTokens
+    }
+
+    /// Convert Float16 (UInt16 bits) to Float32.
+    private func float16ToFloat32(_ value: UInt16) -> Float {
+        let bits = UInt32(value)
+        let sign = (bits >> 15) & 0x1
+        let exp = (bits >> 10) & 0x1F
+        let mantissa = bits & 0x3FF
+
+        if exp == 0 {
+            if mantissa == 0 {
+                return Float(sign == 1 ? -0.0 : 0.0)
+            } else {
+                // Denormalized
+                let result = Float(mantissa) / 1024.0 * pow(Float(2.0), Float(-14.0))
+                return sign == 1 ? -result : result
+            }
+        } else if exp == 31 {
+            if mantissa == 0 {
+                return sign == 1 ? -.infinity : .infinity
+            } else {
+                return .nan
+            }
+        } else {
+            let result = (1.0 + Float(mantissa) / 1024.0) * pow(Float(2.0), Float(Int(exp) - 15))
+            return sign == 1 ? -result : result
+        }
     }
 }
 

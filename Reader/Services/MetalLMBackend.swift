@@ -686,14 +686,40 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
             if v > lnOutMaxF { lnOutMaxF = v }
         }
 
-        // logits
-        let logitsPtr = logitsBuf.contents().bindMemory(to: Float.self, capacity: vocabSize)
+        // logits (logitsBuffer is Float16)
+        let logitsPtr16 = logitsBuf.contents().bindMemory(to: UInt16.self, capacity: vocabSize)
         var logitsMaxF: Float = 0
         for i in 0..<vocabSize {
-            let v = abs(logitsPtr[i])
+            let v = abs(float16ToFloat32(logitsPtr16[i]))
             if v > logitsMaxF { logitsMaxF = v }
         }
         NSLog("[MetalLMBackend] inspect: hidden absmax=%.6f, ln_f absmax=%.6f, logits absmax=%.6f", hiddenMaxF, lnOutMaxF, logitsMaxF)
+    }
+
+    /// Convert Float16 (UInt16 bits) to Float32.
+    private func float16ToFloat32(_ value: UInt16) -> Float {
+        let bits = UInt32(value)
+        let sign = (bits >> 15) & 0x1
+        let exp = (bits >> 10) & 0x1F
+        let mantissa = bits & 0x3FF
+
+        if exp == 0 {
+            if mantissa == 0 {
+                return Float(sign == 1 ? -0.0 : 0.0)
+            } else {
+                let result = Float(mantissa) / 1024.0 * pow(Float(2.0), Float(-14.0))
+                return sign == 1 ? -result : result
+            }
+        } else if exp == 31 {
+            if mantissa == 0 {
+                return sign == 1 ? -.infinity : .infinity
+            } else {
+                return .nan
+            }
+        } else {
+            let result = (1.0 + Float(mantissa) / 1024.0) * pow(Float(2.0), Float(Int(exp) - 15))
+            return sign == 1 ? -result : result
+        }
     }
 
     // MARK: - Kernel Dispatch Helpers
@@ -1125,7 +1151,7 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
         ln2OutBuffer       = device.makeBuffer(length: hiddenSize * fp16, options: .storageModeShared)!
         ffnInterimBuffer   = device.makeBuffer(length: intermediateSize * fp16, options: .storageModeShared)!
         ffnOutBuffer       = device.makeBuffer(length: hiddenSize * fp16, options: .storageModeShared)!
-        logitsBuffer       = device.makeBuffer(length: vocabSize * fp32, options: .storageModeShared)!
+        logitsBuffer       = device.makeBuffer(length: vocabSize * fp16, options: .storageModeShared)!
         finalLnOutBuffer   = device.makeBuffer(length: hiddenSize * fp16, options: .storageModeShared)!
 
         // RoPE LUT: [maxSeqLen, headDim/2] = [1500, 32] float32
