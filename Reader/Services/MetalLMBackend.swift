@@ -288,12 +288,6 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
                inputsEmbds.contents().bindMemory(to: Float16.self, capacity: seqLen * hiddenSize),
                hiddenSizeBytes)
 
-        // Use a temporary MTLBuffer wrapping our hidden states
-        let allHiddenMTLBuf = device.makeBuffer(
-            length: hiddenSizeBytes,
-            options: .storageModeShared
-        )!
-
         // Per-layer processing: all positions go through one layer together
         for layer in 0..<numLayers {
             NSLog("[MetalLMBackend] forwardPrefill: layer %d/%d, computing QKV for all positions", layer, numLayers)
@@ -466,23 +460,25 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
         await kvCache.reset()
     }
 
-    /// Return the absmax of the last layer's hidden state (residualBuffer).
+    /// Return the absmax of the final LayerNorm output (finalLnOutBuffer).
     /// Uses a fresh command buffer — safe to call after any committed+waited pass.
+    /// NOTE: After forwardPrefill's finalForward(), finalLnOutBuffer holds the
+    /// normalized hidden state (ln_f output). residualBuffer is NOT valid after finalForward.
     public func getLastHiddenStateAbsmax() -> Float {
         guard let cmd = commandQueue.makeCommandBuffer(),
               let enc = cmd.makeComputeCommandEncoder() else { return 0 }
         // No-op kernel just to force GPU sync and make buffer contents visible
         enc.setComputePipelineState(residualAddPipeline)
-        enc.setBuffer(residualBuffer, offset: 0, index: 0)
-        enc.setBuffer(residualBuffer, offset: 0, index: 1)
-        enc.setBuffer(residualBuffer, offset: 0, index: 2)
+        enc.setBuffer(finalLnOutBuffer, offset: 0, index: 0)
+        enc.setBuffer(finalLnOutBuffer, offset: 0, index: 1)
+        enc.setBuffer(finalLnOutBuffer, offset: 0, index: 2)
         var s = UInt32(hiddenSize)
         enc.setBytes(&s, length: MemoryLayout<UInt32>.size, index: 3)
         enc.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
 
-        let hPtr = residualBuffer.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
+        let hPtr = finalLnOutBuffer.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
         var absmax: Float = 0
         for i in 0..<hiddenSize {
             let v = abs(Float(hPtr[i]))
@@ -625,7 +621,23 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
         hidden: MTLBuffer,
         commandBuffer: MTLCommandBuffer
     ) throws -> MTLBuffer {
-        // Read lm_head weight stats directly (CPU-side, no GPU sync needed)
+        // Read ln_f and lm_head weight stats (CPU-side, no GPU sync needed)
+        let lnFWBuf = try weight("ln_f.weight")
+        let lnFWPtr = lnFWBuf.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
+        var lnFMax: Float = 0
+        for i in 0..<hiddenSize {
+            let v = abs(Float(lnFWPtr[i]))
+            if v > lnFMax { lnFMax = v }
+        }
+
+        let lnFBBuf = try weight("ln_f.bias")
+        let lnFBbPtr = lnFBBuf.contents().bindMemory(to: Float16.self, capacity: hiddenSize)
+        var lnFBMax: Float = 0
+        for i in 0..<hiddenSize {
+            let v = abs(Float(lnFBbPtr[i]))
+            if v > lnFBMax { lnFBMax = v }
+        }
+
         let lmBuf = try weight("lm_head.weight")
         let lmPtr = lmBuf.contents().bindMemory(to: Float16.self, capacity: vocabSize * hiddenSize)
         var lmMaxF: Float = 0
@@ -634,11 +646,13 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
             if v > lmMaxF { lmMaxF = v }
         }
 
+        NSLog("[MetalLMBackend] finalForward: ln_f.weight absmax=%.4f, ln_f.bias absmax=%.4f, lm_head absmax=%.4f", lnFMax, lnFBMax, lmMaxF)
+
         // Final LayerNorm (encoded into caller's commandBuffer)
         try runLayerNorm(
             input: hidden,
-            gamma: weight("ln_f.weight"),
-            beta: weight("ln_f.bias"),
+            gamma: lnFWBuf,
+            beta: lnFBBuf,
             output: finalLnOutBuffer,
             dim: hiddenSize,
             commandBuffer: commandBuffer
