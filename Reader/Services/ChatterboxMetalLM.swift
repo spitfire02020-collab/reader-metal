@@ -209,16 +209,15 @@ public final class ChatterboxMetalLM: LanguageModelBackend, @unchecked Sendable 
         let totalPrefixLen = condLen + textLen
 
         // Prefill step: process full [conditioning | text] to populate KV cache at position 0.
-        // kvWriteOffset=0, kvReadLength=0 (no past to attend to).
-        // Each step needs its own command buffer — Metal buffers can't be reused after commit+wait.
+        // Uses forwardPrefill() which runs group_query_attention over all seqLen positions
+        // for self-attention, correctly computing contextual hidden states.
         currentSeqLen = totalPrefixLen
         guard let prefillCmd = commandQueue.makeCommandBuffer() else {
             throw MetalLMError.commandBufferFailed
         }
-        let prefillLogitsBuf = try forward(
+        let prefillLogitsBuf = try pipeline.forwardPrefill(
             inputsEmbds: concatBuf,
-            kvWriteOffset: 0,
-            kvReadLength: 0,
+            seqLen: totalPrefixLen,
             commandBuffer: prefillCmd
         )
         prefillCmd.commit()

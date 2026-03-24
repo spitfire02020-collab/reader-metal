@@ -120,6 +120,20 @@ public final class MetalPipeline: LanguageModelBackend, @unchecked Sendable {
         )
     }
 
+    /// Prefill forward: processes all seqLen positions through self-attention + FFN.
+    /// Uses group_query_attention for full-sequence self-attention per layer.
+    public func forwardPrefill(
+        inputsEmbds: MTLBuffer,
+        seqLen: Int,
+        commandBuffer: MTLCommandBuffer
+    ) throws -> MTLBuffer {
+        try backend.forwardPrefill(
+            inputsEmbds: inputsEmbds,
+            seqLen: seqLen,
+            commandBuffer: commandBuffer
+        )
+    }
+
     /// Reset KV cache state.
     public func reset() async {
         await backend.reset()

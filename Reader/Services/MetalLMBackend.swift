@@ -21,6 +21,7 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
     private var gemmNNPipeline: MTLComputePipelineState!
     private var tanhGeluPipeline: MTLComputePipelineState!
     private var attentionPipeline: MTLComputePipelineState!
+    private var prefillAttentionPipeline: MTLComputePipelineState!
     private var layerNormPipeline: MTLComputePipelineState!
     private var residualAddPipeline: MTLComputePipelineState!
     private var ropeKernelPipeline: MTLComputePipelineState!
@@ -58,6 +59,14 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
 
     // Causal mask buffer (float32, [maxSeqLen, maxSeqLen])
     private var causalMaskBuffer: MTLBuffer!
+
+    // Prefill attention buffers (full sequence per forward pass)
+    // [1, numHeads, maxSeqLen, headDim] half ≈ 3 MB per buffer
+    private var prefillQBuffer: MTLBuffer!
+    private var prefillKBuffer: MTLBuffer!
+    private var prefillVBuffer: MTLBuffer!
+    // [1, numHeads, maxSeqLen, headDim] float32 output
+    private var prefillAttnOutBuffer: MTLBuffer!
 
     // Config (local copies for convenience)
     private let numLayers = MetalLMConfig.numLayers
@@ -239,6 +248,218 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
         }
 
         return try finalForward(hidden: hidden, commandBuffer: commandBuffer)
+    }
+
+    /// Prefill forward pass: processes all seqLen positions through self-attention + FFN.
+    ///
+    /// For each layer l = 0..numLayers-1:
+    ///   For each position p = 0..seqLen-1 (sequential):
+    ///     1. Read inputsEmbds[p] → hidden (single position slice)
+    ///     2. Pre-LN → ln1_out
+    ///     3. QKV proj (single position)
+    ///     4. Unpack → prefillQ/K/V[p]
+    ///     5. RoPE on prefillQ[p], prefillK[p]
+    ///     6. Write K/V[p] → KV cache
+    ///     7. GroupQueryAttn (all seqLen positions at once) → attn_out[p]
+    ///     8. O_proj + residual_add + post-LN + FFN + residual_add
+    ///   Hidden for position p+1 at layer l = hidden from position p at layer l
+    ///
+    /// After all layers: final LN + lm_head → logits.
+    ///
+    /// The key difference from forward() is step 7: group_query_attention uses ALL
+    /// seqLen positions for self-attention, correctly populating the KV cache for
+    /// subsequent decode steps.
+    public func forwardPrefill(
+        inputsEmbds: MTLBuffer,
+        seqLen: Int,
+        commandBuffer: MTLCommandBuffer
+    ) throws -> MTLBuffer {
+        NSLog("[MetalLMBackend] forwardPrefill: seqLen=%d, starting", seqLen)
+
+        // Reusable buffer for hidden states across all positions: [1, seqLen, 1024] half
+        // We allocate once at prefill start and reuse throughout.
+        // Note: This adds one-time allocation cost but avoids per-layer reallocation.
+        let hiddenSizeBytes = seqLen * hiddenSize * MemoryLayout<Float16>.size
+        let allHiddenBuf = UnsafeMutablePointer<Float16>.allocate(capacity: seqLen * hiddenSize)
+        defer { allHiddenBuf.deallocate() }
+
+        // Copy initial hidden states from inputsEmbds
+        memcpy(allHiddenBuf,
+               inputsEmbds.contents().bindMemory(to: Float16.self, capacity: seqLen * hiddenSize),
+               hiddenSizeBytes)
+
+        // Use a temporary MTLBuffer wrapping our hidden states
+        let allHiddenMTLBuf = device.makeBuffer(
+            length: hiddenSizeBytes,
+            options: .storageModeShared
+        )!
+
+        // Per-layer processing: all positions go through one layer together
+        for layer in 0..<numLayers {
+            NSLog("[MetalLMBackend] forwardPrefill: layer %d/%d, computing QKV for all positions", layer, numLayers)
+
+            // ── PHASE 1: Pre-LN + QKV for all positions ─────────────────────
+            // For each position, compute pre-LN and QKV projection, store in prefill buffers
+            for pos in 0..<seqLen {
+                let byteOffset = pos * hiddenSize * MemoryLayout<Float16>.size
+
+                // Copy hidden[pos] to ln1OutBuffer (single-position work buffer)
+                memcpy(ln1OutBuffer.contents(),
+                       allHiddenBuf.advanced(by: pos * hiddenSize),
+                       hiddenSize * MemoryLayout<Float16>.size)
+
+                // Pre-LayerNorm
+                try runLayerNorm(
+                    input: ln1OutBuffer,
+                    gamma: weight("h.\(layer).ln_1.weight"),
+                    beta: weight("h.\(layer).ln_1.bias"),
+                    output: ln1OutBuffer,
+                    dim: hiddenSize,
+                    commandBuffer: commandBuffer
+                )
+
+                // QKV projection
+                try runGEMM_NT(
+                    A: ln1OutBuffer,
+                    B: weight("h.\(layer).attn.c_attn.weight"),
+                    C: qkvBuffer,
+                    M: 1,
+                    N: gpt2NumHeads * headDim * 3,
+                    K: hiddenSize,
+                    commandBuffer: commandBuffer
+                )
+
+                // Unpack qkvBuffer → single-position qBuffer/kWriteBuffer/vWriteBuffer
+                unpackQKV()
+
+                // Apply RoPE to Q and K at this position (in-place on single-position buffers)
+                try applyRoPELayer(
+                    layer: layer,
+                    q: qBuffer,
+                    k: kWriteBuffer,
+                    seqPos: pos,
+                    commandBuffer: commandBuffer
+                )
+
+                // Copy rotated Q/K/V to prefill buffers at position 'pos'
+                try unpackQKVToPrefill(position: pos, seqLen: seqLen)
+            }
+
+            // ── PHASE 2: Write K/V for all positions to KV cache ─────────────
+            for pos in 0..<seqLen {
+                writeKVPairs(layer: layer, kvWriteOffset: pos)
+            }
+
+            // ── PHASE 4: Group Query Attention (all positions at once) ─────────
+            NSLog("[MetalLMBackend] forwardPrefill: layer %d, group query attention", layer)
+            try runPrefillAttention(
+                seqLen: seqLen,
+                commandBuffer: commandBuffer
+            )
+
+            // ── PHASE 5: For each position: O_proj + residual + postLN + FFN ──
+            for pos in 0..<seqLen {
+                let byteOffset = pos * hiddenSize * MemoryLayout<Float16>.size
+
+                // Extract attn_out[pos] from prefillAttnOutBuffer → attnOutBuffer
+                // prefillAttnOutBuffer is [1, numHeads, seqLen, headDim] float32
+                // attn_out at 'pos' starts at offset pos * numHeads * headDim * 4
+                // attnOutBuffer is [1, numHeads, 1, headDim] float16
+                // Need float32 → float16 conversion
+                let attnSrcOffset = pos * gpt2NumHeads * headDim * MemoryLayout<Float32>.size
+                let attnSrcPtr = prefillAttnOutBuffer.contents()
+                    .advanced(by: attnSrcOffset)
+                    .bindMemory(to: Float32.self, capacity: gpt2NumHeads * headDim)
+                let attnDstPtr = attnOutBuffer.contents().bindMemory(to: Float16.self, capacity: gpt2NumHeads * headDim)
+                for i in 0..<(gpt2NumHeads * headDim) {
+                    attnDstPtr[i] = Float16(attnSrcPtr[i])
+                }
+
+                // O projection → residualBuffer
+                try runGEMM_NT(
+                    A: attnOutBuffer,
+                    B: weight("h.\(layer).attn.c_proj.weight"),
+                    C: residualBuffer,
+                    M: 1,
+                    N: hiddenSize,
+                    K: gpt2NumHeads * headDim,
+                    commandBuffer: commandBuffer
+                )
+
+                // Residual add: residual = hidden + attn_out
+                memcpy(ln1OutBuffer.contents(),
+                       allHiddenBuf.advanced(by: pos * hiddenSize),
+                       hiddenSize * MemoryLayout<Float16>.size)
+                try runResidualAdd(
+                    a: ln1OutBuffer,
+                    b: residualBuffer,
+                    output: residualBuffer,
+                    size: hiddenSize,
+                    commandBuffer: commandBuffer
+                )
+
+                // Post-LayerNorm
+                try runLayerNorm(
+                    input: residualBuffer,
+                    gamma: weight("h.\(layer).ln_2.weight"),
+                    beta: weight("h.\(layer).ln_2.bias"),
+                    output: ln2OutBuffer,
+                    dim: hiddenSize,
+                    commandBuffer: commandBuffer
+                )
+
+                // FFN gate + GELU
+                try runGEMM_NT(
+                    A: ln2OutBuffer,
+                    B: weight("h.\(layer).mlp.c_fc.weight"),
+                    C: ffnInterimBuffer,
+                    M: 1,
+                    N: intermediateSize,
+                    K: hiddenSize,
+                    commandBuffer: commandBuffer
+                )
+                try runTanhGelu(
+                    input: ffnInterimBuffer,
+                    output: ffnInterimBuffer,
+                    size: intermediateSize,
+                    commandBuffer: commandBuffer
+                )
+
+                // FFN up projection
+                try runGEMM_NT(
+                    A: ffnInterimBuffer,
+                    B: weight("h.\(layer).mlp.c_proj.weight"),
+                    C: ffnOutBuffer,
+                    M: 1,
+                    N: hiddenSize,
+                    K: intermediateSize,
+                    commandBuffer: commandBuffer
+                )
+
+                // Residual add: hidden = residual + ffn_hidden
+                try runResidualAdd(
+                    a: residualBuffer,
+                    b: ffnOutBuffer,
+                    output: residualBuffer,
+                    size: hiddenSize,
+                    commandBuffer: commandBuffer
+                )
+
+                // Write updated hidden state for position 'pos'
+                memcpy(allHiddenBuf.advanced(by: pos * hiddenSize),
+                       residualBuffer.contents(),
+                       hiddenSize * MemoryLayout<Float16>.size)
+            }
+        }
+
+        NSLog("[MetalLMBackend] forwardPrefill: final LN + lm_head")
+        // Final LayerNorm + LM head on the last position's hidden state
+        let lastPosOffset = (seqLen - 1) * hiddenSize * MemoryLayout<Float16>.size
+        memcpy(ln1OutBuffer.contents(),
+               allHiddenBuf.advanced(by: (seqLen - 1) * hiddenSize),
+               hiddenSize * MemoryLayout<Float16>.size)
+
+        return try finalForward(hidden: ln1OutBuffer, commandBuffer: commandBuffer)
     }
 
     public func reset() async {
@@ -736,6 +957,99 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
         memcpy(vPtr, qkvPtr.advanced(by: 2048), kBytes)
     }
 
+    /// Unpack fused qkvBuffer [1, 1, 3072] into prefill Q/K/V buffers at a specific position.
+    /// GPT2NoEmbed: qkv = [1, 1, 3072] = 16*64*3 = Q + K + V
+    /// Pre-fill buffers: [1, numHeads, seqLen, headDim] half
+    /// At position 'pos': copy Q/K/V to prefillQ/K/V[h, pos, d] = qkv[h*64 + d], h*64+d, h*64+d
+    private func unpackQKVToPrefill(position: Int, seqLen: Int) throws {
+        let qkvPtr = qkvBuffer.contents().bindMemory(to: Float16.self, capacity: 3072)
+        let preQPtr = prefillQBuffer.contents().bindMemory(to: Float16.self, capacity: 1 * gpt2NumHeads * maxSeqLen * headDim)
+        let preKPtr = prefillKBuffer.contents().bindMemory(to: Float16.self, capacity: 1 * gpt2NumHeads * maxSeqLen * headDim)
+        let preVPtr = prefillVBuffer.contents().bindMemory(to: Float16.self, capacity: 1 * gpt2NumHeads * maxSeqLen * headDim)
+
+        for h in 0..<gpt2NumHeads {
+            for d in 0..<headDim {
+                let qkv_idx = h * headDim + d
+                // prefill buffer at [h, pos, d]
+                let pre_idx = h * seqLen * headDim + position * headDim + d
+                preQPtr[pre_idx] = qkvPtr[qkv_idx]                          // Q
+                preKPtr[pre_idx] = qkvPtr[1024 + qkv_idx]                   // K
+                preVPtr[pre_idx] = qkvPtr[2048 + qkv_idx]                   // V
+            }
+        }
+    }
+
+    /// Apply RoPE to prefill Q and K buffers for all seqLen positions.
+    /// The prefill buffers are [1, numHeads, seqLen, headDim].
+    /// We apply RoPE per-position using the same ropeKernelPipeline but need
+    /// to handle the different buffer layout.
+    private func applyRoPEPrefill(
+        layer: Int,
+        seqLen: Int,
+        commandBuffer: MTLCommandBuffer
+    ) throws {
+        guard let enc = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalLMError.commandBufferFailed
+        }
+        defer { enc.endEncoding() }
+
+        enc.setComputePipelineState(ropeKernelPipeline)
+        enc.setBuffer(prefillQBuffer, offset: 0, index: 0)
+        enc.setBuffer(prefillKBuffer, offset: 0, index: 1)
+        enc.setBuffer(ropeCosBuffer, offset: 0, index: 2)
+        enc.setBuffer(ropeSinBuffer, offset: 0, index: 3)
+
+        var numHeads = UInt32(gpt2NumHeads)
+        var seq = UInt32(seqLen)
+        var hd = UInt32(headDim)
+        enc.setBytes(&numHeads, length: MemoryLayout<UInt32>.size, index: 4)
+        enc.setBytes(&seq, length: MemoryLayout<UInt32>.size, index: 5)
+        enc.setBytes(&hd, length: MemoryLayout<UInt32>.size, index: 6)
+
+        // For prefill, we apply RoPE one position at a time using the standard kernel
+        // by only considering the relevant slice. Grid: (numHeads, seqLen/2) = (16, 82)
+        let threadsPerGroup = MTLSize(width: 16, height: 4, depth: 1)
+        let numThreadGroups = MTLSize(
+            width: (gpt2NumHeads + 15) / 16,
+            height: ((seqLen / 2) + 3) / 4,
+            depth: 1
+        )
+        enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)
+    }
+
+    /// Run group_query_attention for the full sequence (prefill self-attention).
+    /// Uses prefillQ/K/V buffers containing all positions' Q/K/V after RoPE.
+    /// Writes output to prefillAttnOutBuffer [1, numHeads, seqLen, headDim] float32.
+    /// Then reads back and writes per-position results to attnOutBuffer.
+    private func runPrefillAttention(
+        seqLen: Int,
+        commandBuffer: MTLCommandBuffer
+    ) throws {
+        guard let enc = commandBuffer.makeComputeCommandEncoder() else {
+            throw MetalLMError.commandBufferFailed
+        }
+        defer { enc.endEncoding() }
+
+        enc.setComputePipelineState(prefillAttentionPipeline)
+        enc.setBuffer(prefillQBuffer, offset: 0, index: 0)
+        enc.setBuffer(prefillKBuffer, offset: 0, index: 1)
+        enc.setBuffer(prefillVBuffer, offset: 0, index: 2)
+        enc.setBuffer(prefillAttnOutBuffer, offset: 0, index: 3)
+
+        var seqLenU = UInt32(seqLen)
+        enc.setBytes(&seqLenU, length: MemoryLayout<UInt32>.size, index: 4)
+
+        // Grid: (numHeads=16, seqLen) = (16, 164) → one thread per (q_head, seq_pos)
+        // Each thread computes all head_dim values for that (q_head, seq_pos)
+        let threadsPerGroup = MTLSize(width: 16, height: 4, depth: 1)
+        let numThreadGroups = MTLSize(
+            width: gpt2NumHeads,
+            height: seqLen,
+            depth: 1
+        )
+        enc.dispatchThreadgroups(numThreadGroups, threadsPerThreadgroup: threadsPerGroup)
+    }
+
     /// Write K/V write buffers into the KV cache for a specific layer and position.
     private func writeKVPairs(layer: Int, kvWriteOffset: Int) {
         let kStride = numKVHeads * headDim  // 16 * 64 = 1024 elements
@@ -785,6 +1099,7 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
         gemmNNPipeline = try makePipeline("gemm_nn")
         tanhGeluPipeline = try makePipeline("tanh_gelu_kernel")
         attentionPipeline = try makePipeline("attention_decode_step")
+        prefillAttentionPipeline = try makePipeline("group_query_attention")
         layerNormPipeline = try makePipeline("layer_norm")
         residualAddPipeline = try makePipeline("residual_add")
         ropeKernelPipeline = try makePipeline("rope_apply_kernel")
@@ -821,6 +1136,14 @@ public final class MetalLMBackend: LanguageModelBackend, @unchecked Sendable {
         // Causal mask: [maxSeqLen, maxSeqLen] float32 (for prefill; reserved for decode)
         let causalSize = maxSeqLen * maxSeqLen * fp32
         causalMaskBuffer = device.makeBuffer(length: causalSize, options: .storageModeShared)!
+
+        // Prefill attention: [1, numHeads, maxSeqLen, headDim] half/float
+        let prefillQSize = 1 * gpt2NumHeads * maxSeqLen * headDim * fp16
+        let prefillAttnOutSize = 1 * gpt2NumHeads * maxSeqLen * headDim * fp32
+        prefillQBuffer = device.makeBuffer(length: prefillQSize, options: .storageModeShared)!
+        prefillKBuffer = device.makeBuffer(length: prefillQSize, options: .storageModeShared)!
+        prefillVBuffer = device.makeBuffer(length: prefillQSize, options: .storageModeShared)!
+        prefillAttnOutBuffer = device.makeBuffer(length: prefillAttnOutSize, options: .storageModeShared)!
     }
 
     private func precomputeRoPE() throws {
